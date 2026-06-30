@@ -1,0 +1,97 @@
+import type { AppSettings, Quote } from "@/domain/models";
+import type { QuoteRepository } from "@/infrastructure/quoteRepository";
+import { StorageContext } from "@/infrastructure/storage/StorageContext";
+import { mergeStoredSettings } from "@/infrastructure/storage/settings";
+import type { AppStorage, StoredQuote } from "@/infrastructure/storage/types";
+import { PropsWithChildren, useMemo } from "react";
+
+const QUOTES_KEY = "mac-desgloses:quotes:v1";
+const SETTINGS_KEY = "mac-desgloses:settings:v1";
+
+function browserStorage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function parseValue<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+class LocalStorageQuoteRepository implements QuoteRepository {
+  constructor(private readonly storage: Storage | null) {}
+
+  private read(): StoredQuote[] {
+    return parseValue<StoredQuote[]>(this.storage?.getItem(QUOTES_KEY) ?? null, []);
+  }
+
+  async save(quote: Quote) {
+    const records = this.read();
+    const record: StoredQuote = {
+      quote,
+      searchText:
+        `${quote.client.name} ${quote.projectName} ${quote.number}`.toLowerCase(),
+    };
+    const existingIndex = records.findIndex(({ quote: stored }) => stored.id === quote.id);
+
+    if (existingIndex === -1) {
+      records.push(record);
+    } else {
+      records[existingIndex] = record;
+    }
+
+    this.storage?.setItem(QUOTES_KEY, JSON.stringify(records));
+  }
+
+  async list(search = "") {
+    const normalizedSearch = search.toLowerCase();
+    return this.read()
+      .filter(({ searchText }) => searchText.includes(normalizedSearch))
+      .map(({ quote }) => quote)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async findById(id: string) {
+    return this.read().find(({ quote }) => quote.id === id)?.quote ?? null;
+  }
+}
+
+class LocalStorageAdapter implements AppStorage {
+  readonly quotes: QuoteRepository;
+
+  constructor(private readonly storage: Storage | null) {
+    this.quotes = new LocalStorageQuoteRepository(storage);
+  }
+
+  async loadSettings() {
+    const stored = parseValue<Partial<AppSettings>>(
+      this.storage?.getItem(SETTINGS_KEY) ?? null,
+      {},
+    );
+    return mergeStoredSettings(stored);
+  }
+
+  async saveSettings(settings: AppSettings) {
+    this.storage?.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }
+}
+
+export function StorageProvider({ children }: PropsWithChildren) {
+  const storage = useMemo<AppStorage>(
+    () => new LocalStorageAdapter(browserStorage()),
+    [],
+  );
+
+  return (
+    <StorageContext.Provider value={storage}>
+      {children}
+    </StorageContext.Provider>
+  );
+}

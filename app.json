@@ -6,7 +6,16 @@
     "orientation": "portrait",
     "scheme": "macdesgloses",
     "userInterfaceStyle": "automatic",
-    "plugins": ["expo-router", "expo-sqlite"],
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite que Mac Desgloses seleccione el logo de tu empresa."
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     },

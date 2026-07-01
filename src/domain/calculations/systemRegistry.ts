@@ -16,11 +16,15 @@ const round = (value: number, precision = 2) =>
  * referencias de perfiles y accesorios reales.
  */
 function demoBreakdown(input: OpeningInput): MaterialBreakdown {
-  const { widthMm, heightMm, leaves, quantity } = input;
-  const glassWidth = widthMm / leaves;
-  const glassArea = (glassWidth * heightMm * leaves * quantity) / 1_000_000;
+  const { widthMm, heightMm, quantity } = input;
+  const parts =
+    input.systemId === "AA"
+      ? input.bodyCount ?? input.leaves ?? 1
+      : input.leaves ?? 2;
+  const glassWidth = widthMm / parts;
+  const glassArea = (glassWidth * heightMm * parts * quantity) / 1_000_000;
   const frameMeters = ((widthMm * 2 + heightMm * 2) * quantity) / 1000;
-  const leafMeters = ((glassWidth * 2 + heightMm * 2) * leaves * quantity) / 1000;
+  const leafMeters = ((glassWidth * 2 + heightMm * 2) * parts * quantity) / 1000;
 
   return {
     cuts: [
@@ -45,7 +49,7 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
         materialCode: `${input.systemId}-HOJA-H`,
         materialName: "Perfil de hoja horizontal (referencia pendiente)",
         lengthMm: round(glassWidth, 0),
-        pieces: 2 * leaves * quantity,
+        pieces: 2 * parts * quantity,
         purpose: "Hojas",
       },
       {
@@ -53,7 +57,7 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
         materialCode: `${input.systemId}-HOJA-V`,
         materialName: "Perfil de hoja vertical (referencia pendiente)",
         lengthMm: heightMm,
-        pieces: 2 * leaves * quantity,
+        pieces: 2 * parts * quantity,
         purpose: "Hojas",
       },
     ],
@@ -69,61 +73,49 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
         code: "GOMA",
         name: "Goma",
         unit: "m",
-        quantity: input.accessories.rubberMeters * quantity,
+        quantity: input.accessories.rubberMeters,
         category: "accessory",
       },
       {
         code: "RUEDAS",
         name: "Ruedas",
         unit: "ud",
-        quantity: input.accessories.wheels * quantity,
+        quantity: input.accessories.wheels,
         category: "accessory",
       },
       {
         code: `CIERRE-${input.accessories.lockType}`,
         name:
-          input.accessories.lockType === "puño-centro"
-            ? "Puño de centro"
-            : input.accessories.lockType === "monopunto"
-              ? "Monopunto"
+          input.accessories.lockType === "puño"
+            ? "Puño"
+          : input.accessories.lockType === "mono"
+              ? "Mono"
+              : input.accessories.lockType === "monopunto"
+                ? "Monopunto"
               : "Cerradura tradicional",
         unit: "ud",
-        quantity: input.accessories.locks * quantity,
+        quantity: input.accessories.locks,
         category: "accessory",
       },
       {
         code: "KIT-GUIAS",
         name: "Kit de guías plásticas",
         unit: "ud",
-        quantity: input.accessories.guideKits * quantity,
+        quantity: input.accessories.guideKits,
         category: "accessory",
       },
       {
         code: "FELPA",
         name: "Felpa",
         unit: "m",
-        quantity: input.accessories.weatherstripMeters * quantity,
+        quantity: input.accessories.weatherstripMeters,
         category: "accessory",
       },
       {
-        code: "TORNILLO-INSTALACION",
-        name: "Tornillos de instalación",
+        code: "TORNILLOS",
+        name: "Tornillos",
         unit: "ud",
-        quantity: input.accessories.installationScrews * quantity,
-        category: "accessory",
-      },
-      {
-        code: "TORNILLO-FABRICACION",
-        name: "Tornillos de fabricación",
-        unit: "ud",
-        quantity: input.accessories.fabricationScrews * quantity,
-        category: "accessory",
-      },
-      {
-        code: "TARUGOS",
-        name: "Tarugos",
-        unit: "ud",
-        quantity: input.accessories.wallPlugs * quantity,
+        quantity: input.accessories.screws,
         category: "accessory",
       },
     ] as MaterialBreakdown["materials"]).filter(
@@ -133,7 +125,7 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
       {
         widthMm: round(glassWidth, 0),
         heightMm,
-        pieces: leaves * quantity,
+        pieces: parts * quantity,
         areaM2: round(glassArea),
       },
     ],
@@ -160,6 +152,13 @@ export const SYSTEM_REGISTRY: Record<SystemId, WindowSystemDefinition> =
 export function calculateMaterials(input: OpeningInput): MaterialBreakdown {
   if (input.widthMm <= 0 || input.heightMm <= 0 || input.quantity <= 0) {
     throw new Error("Las medidas y la cantidad deben ser mayores que cero.");
+  }
+  const bodyCount = input.bodyCount ?? input.leaves;
+  if (
+    input.systemId === "AA" &&
+    (!bodyCount || bodyCount <= 0 || !Number.isInteger(bodyCount))
+  ) {
+    throw new Error("La cantidad de cuerpos debe ser un entero mayor que cero.");
   }
   return SYSTEM_REGISTRY[input.systemId].calculate(input);
 }

@@ -6,9 +6,10 @@ import { Badge, Button, Card, Money, SectionHeader } from "@/presentation/compon
 import { GlassSheetSketch } from "@/presentation/GlassSheetSketch";
 import { useTheme } from "@/presentation/theme";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -20,8 +21,12 @@ export default function QuoteSummaryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const { settings, findQuote } = useApp();
+  const { settings, findQuote, saveQuote } = useApp();
   const [quote, setQuote] = useState<Quote | null>();
+  const scrollRef = useRef<ScrollView>(null);
+  const firstItemY = useRef(0);
+  const [optimizerY, setOptimizerY] = useState(0);
+  const [converting, setConverting] = useState(false);
   const wide = width >= 900;
 
   useEffect(() => {
@@ -68,13 +73,34 @@ export default function QuoteSummaryScreen() {
 
   const currency = quote.settingsSnapshot.currency || settings.prices.currency;
 
+  const convertToQuote = async () => {
+    if (quote.status === "approved") return;
+    setConverting(true);
+    try {
+      const converted: Quote = {
+        ...quote,
+        status: "approved",
+        updatedAt: new Date().toISOString(),
+      };
+      await saveQuote(converted);
+      setQuote(converted);
+      Alert.alert("Cotización creada", "El desglose quedó guardado como cotización.");
+    } catch {
+      Alert.alert("No se pudo convertir", "Inténtalo de nuevo.");
+    } finally {
+      setConverting(false);
+    }
+  };
+
   return (
     <>
       <Stack.Screen options={{ title: quote.number }} />
       <ScrollView
+        ref={scrollRef}
         style={{ backgroundColor: theme.background }}
         contentContainerStyle={styles.page}
       >
+        <SectionHeader title="Resumen del trabajo" action="Datos demostrativos" />
         <View style={[styles.hero, { backgroundColor: theme.brandBlue }]}>
           <View style={styles.heroMain}>
             <Badge label={`${quote.status === "draft" ? "Borrador" : quote.status}`} tone="red" />
@@ -101,12 +127,45 @@ export default function QuoteSummaryScreen() {
           </Text>
         </View>
 
+        <View style={styles.primaryActions}>
+          <View style={styles.primaryAction}>
+            <Button
+              title="Optimizador de cortes"
+              variant="secondary"
+              onPress={() => scrollRef.current?.scrollTo({ y: optimizerY, animated: true })}
+            />
+          </View>
+          <View style={styles.primaryAction}>
+            <Button
+              title={
+                quote.status === "approved"
+                  ? "Cotización creada"
+                  : converting
+                    ? "Convirtiendo…"
+                    : "Convertir en cotización"
+              }
+              disabled={quote.status === "approved" || converting}
+              onPress={() => void convertToQuote()}
+            />
+          </View>
+        </View>
+
         {quote.items.map((item, itemIndex) => {
           const profiles = item.breakdown.materials.filter(({ category }) => category === "profile");
           const accessories = item.breakdown.materials.filter(({ category }) => category === "accessory");
           const glassPlan = glassPlansByItem[itemIndex];
           return (
-            <View key={item.id} style={styles.itemSection}>
+            <View
+              key={item.id}
+              style={styles.itemSection}
+              onLayout={
+                itemIndex === 0
+                  ? ({ nativeEvent }) => {
+                      firstItemY.current = nativeEvent.layout.y;
+                    }
+                  : undefined
+              }
+            >
               <View style={styles.itemHeading}>
                 <View style={[styles.itemIndex, { backgroundColor: theme.brandRed }]}>
                   <Text style={styles.itemIndexText}>{itemIndex + 1}</Text>
@@ -114,9 +173,14 @@ export default function QuoteSummaryScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.itemTitle, { color: theme.text }]}>{item.description}</Text>
                   <Text style={{ color: theme.muted }}>
-                    {item.opening.widthMm} × {item.opening.heightMm} mm · {item.opening.quantity} ud. · {item.opening.leaves} hojas
-                    {item.opening.railType && item.opening.railType !== "no-aplica"
-                      ? ` · ${item.opening.railType}`
+                    {item.opening.width ?? item.opening.widthMm} ×{" "}
+                    {item.opening.height ?? item.opening.heightMm}{" "}
+                    {item.opening.unit ?? "mm"} · {item.opening.quantity} ud. ·{" "}
+                    {item.opening.systemId === "AA"
+                      ? `${item.opening.bodyCount ?? item.opening.leaves ?? 1} cuerpos`
+                      : `${item.opening.leaves ?? 2} hojas`}
+                    {item.opening.railPosition
+                      ? ` · ${item.opening.railPosition === "interior" ? "Int." : "Ext."}`
                       : ""}
                   </Text>
                 </View>
@@ -125,8 +189,22 @@ export default function QuoteSummaryScreen() {
 
               <View style={[styles.contentGrid, wide && styles.contentGridWide]}>
                 <View style={styles.gridColumn}>
+                  {item.squareFoot && (
+                    <Card>
+                      <SectionHeader title="Precio por pies cuadrados" />
+                      <TableHeader columns={["Área individual", "Área total", "Precio / total"]} />
+                      <TableRow
+                        values={[
+                          `${item.squareFoot.individualArea} pie²`,
+                          `${item.squareFoot.totalArea} pie²`,
+                          `${item.squareFoot.pricePerSquareFoot} ${currency}/pie² · ${item.squareFoot.total} ${currency}`,
+                        ]}
+                      />
+                    </Card>
+                  )}
+
                   <Card>
-                    <SectionHeader title="Materiales" action={`${profiles.length} grupos`} />
+                    <SectionHeader title="Materiales calculados" action={`${profiles.length} grupos`} />
                     <TableHeader columns={["Referencia", "Material", "Cantidad"]} />
                     {profiles.map((material) => (
                       <TableRow
@@ -167,10 +245,8 @@ export default function QuoteSummaryScreen() {
                   </Card>
 
                   <Card>
-                    <SectionHeader title="Accesorios" action={`${accessories.length} activos`} />
-                    {accessories.length === 0 ? (
-                      <Text style={{ color: theme.muted }}>No se agregaron accesorios a esta medida.</Text>
-                    ) : (
+                    <SectionHeader title="Accesorios automáticos" action={item.opening.accessories.lockType} />
+                    {item.opening.accessories.screws === undefined ? (
                       accessories.map((accessory) => (
                         <View key={accessory.code} style={[styles.cleanRow, { borderBottomColor: theme.border }]}>
                           <View style={{ flex: 1 }}>
@@ -179,6 +255,22 @@ export default function QuoteSummaryScreen() {
                           </View>
                           <Text style={[styles.rowValue, { color: theme.primary }]}>
                             {accessory.quantity} {accessory.unit}
+                          </Text>
+                        </View>
+                      ))
+                    ) : (
+                      [
+                        ["Goma", item.opening.accessories.rubberMeters, "m"],
+                        ["Ruedas", item.opening.accessories.wheels, "ud."],
+                        ["Kit de guías", item.opening.accessories.guideKits, "ud."],
+                        ["Felpa", item.opening.accessories.weatherstripMeters, "m"],
+                        ["Tornillos", item.opening.accessories.screws, "ud."],
+                        [`Cerradura ${item.opening.accessories.lockType}`, item.opening.accessories.locks, "ud."],
+                      ].map(([name, quantity, unit]) => (
+                        <View key={String(name)} style={[styles.cleanRow, { borderBottomColor: theme.border }]}>
+                          <Text style={[styles.rowTitle, { color: theme.text, flex: 1 }]}>{name}</Text>
+                          <Text style={[styles.rowValue, { color: theme.primary }]}>
+                            {quantity} {unit}
                           </Text>
                         </View>
                       ))
@@ -238,21 +330,30 @@ export default function QuoteSummaryScreen() {
                 </View>
               </Card>
 
-              <Card>
-                <SectionHeader title="Optimizador de barras" action={`${barsByItem[itemIndex].length} barras estimadas`} />
-                <View style={styles.barGrid}>
-                  {barsByItem[itemIndex].map((bar, index) => (
-                    <View key={`${bar.materialCode}-${bar.id}-${index}`} style={[styles.barCard, { backgroundColor: theme.surfaceAlt }]}>
-                      <Text style={[styles.rowCode, { color: theme.primary }]}>{bar.materialCode}</Text>
-                      <Text style={[styles.rowTitle, { color: theme.text }]}>Barra #{bar.id}</Text>
-                      <Text style={{ color: theme.muted, lineHeight: 19 }}>
-                        {bar.cuts.map((cut) => `${cut.lengthMm} mm`).join(" + ")}
-                      </Text>
-                      <Text style={{ color: theme.warning, fontWeight: "800" }}>Sobrante: {bar.remainderMm} mm</Text>
-                    </View>
-                  ))}
-                </View>
-              </Card>
+              <View
+                onLayout={
+                  itemIndex === 0
+                    ? ({ nativeEvent }) =>
+                        setOptimizerY(firstItemY.current + nativeEvent.layout.y)
+                    : undefined
+                }
+              >
+                <Card>
+                  <SectionHeader title="Optimizador de cortes" action={`${barsByItem[itemIndex].length} barras estimadas`} />
+                  <View style={styles.barGrid}>
+                    {barsByItem[itemIndex].map((bar, index) => (
+                      <View key={`${bar.materialCode}-${bar.id}-${index}`} style={[styles.barCard, { backgroundColor: theme.surfaceAlt }]}>
+                        <Text style={[styles.rowCode, { color: theme.primary }]}>{bar.materialCode}</Text>
+                        <Text style={[styles.rowTitle, { color: theme.text }]}>Barra #{bar.id}</Text>
+                        <Text style={{ color: theme.muted, lineHeight: 19 }}>
+                          {bar.cuts.map((cut) => `${cut.lengthMm} mm`).join(" + ")}
+                        </Text>
+                        <Text style={{ color: theme.warning, fontWeight: "800" }}>Sobrante: {bar.remainderMm} mm</Text>
+                      </View>
+                    ))}
+                  </View>
+                </Card>
+              </View>
             </View>
           );
         })}
@@ -261,6 +362,11 @@ export default function QuoteSummaryScreen() {
           <Card style={{ flex: 1 }}>
             <SectionHeader title="Resumen económico" />
             <TotalRow label="Costo directo" value={quote.totals.directCost} currency={currency} />
+            <TotalRow
+              label="Precio por pies²"
+              value={quote.items.reduce((sum, item) => sum + (item.squareFoot?.total ?? 0), 0)}
+              currency={currency}
+            />
             <TotalRow label="Margen" value={quote.totals.margin} currency={currency} />
             <TotalRow label="Subtotal" value={quote.totals.subtotal} currency={currency} />
             <TotalRow label={`ITBIS (${quote.settingsSnapshot.taxRate}%)`} value={quote.totals.tax} currency={currency} />
@@ -339,6 +445,8 @@ const styles = StyleSheet.create({
   notice: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 6 },
   noticeBar: { width: 4, height: 34, borderRadius: 3 },
   noticeText: { flex: 1, fontSize: 12, lineHeight: 17 },
+  primaryActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  primaryAction: { flexGrow: 1, flexBasis: 220 },
   itemSection: { gap: 14 },
   itemHeading: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 6 },
   itemIndex: { width: 39, height: 39, borderRadius: 12, alignItems: "center", justifyContent: "center" },

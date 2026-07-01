@@ -13,10 +13,9 @@ precios, optimizar cortes y guardar el resumen localmente.
 
 - Android, iOS y web mediante Expo/React Native.
 - Alta de cliente y proyecto dentro de una cotización.
-- Catálogo visual de 11 sistemas: Protectores Aluestrong, P-65, AA,
-  M-100 con/sin tapa, Puerta Abisagrada P40, Puerta Comercial, Tradicional,
-  P-92, C-70 y Ventana Abisagrada P40.
-- Ventanas de 2, 3 o 4 hojas, medidas en milímetros y cantidad.
+- Catálogo visual de 9 sistemas: P-65, AA, M-100 con/sin tapa,
+  Puerta Abisagrada P40, Puerta Comercial, Tradicional, P-92 y C-70.
+- Ventanas de 2, 3 o 4 hojas, medidas en pulgadas o centímetros y cantidad.
 - Desglose básico de perfiles, cristales y accesorios.
 - Costo directo, margen, impuesto y total.
 - Optimización de barras con First Fit Decreasing.

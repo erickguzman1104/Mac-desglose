@@ -12,6 +12,7 @@ export function calculatePrice(
   breakdown: MaterialBreakdown,
   quantity: number,
   settings: PriceSettings,
+  squareFootCharge = 0,
 ): PriceBreakdown {
   const profileMeters = breakdown.materials
     .filter((material) => material.category === "profile")
@@ -19,13 +20,15 @@ export function calculatePrice(
   const accessoryPriceByCode: Record<string, number> = {
     GOMA: settings.accessoryPrices.rubberPerMeter,
     RUEDAS: settings.accessoryPrices.wheel,
-    "CIERRE-puño-centro": settings.accessoryPrices.centerHandle,
+    "CIERRE-puño": settings.accessoryPrices.centerHandle,
+    "CIERRE-mono": settings.accessoryPrices.singlePointLock,
     "CIERRE-monopunto": settings.accessoryPrices.singlePointLock,
     "CIERRE-tradicional": settings.accessoryPrices.traditionalLock,
     "KIT-GUIAS": settings.accessoryPrices.guideKit,
     FELPA: settings.accessoryPrices.weatherstripPerMeter,
     "TORNILLO-INSTALACION": settings.accessoryPrices.installationScrew,
     "TORNILLO-FABRICACION": settings.accessoryPrices.fabricationScrew,
+    TORNILLOS: settings.accessoryPrices.installationScrew,
     TARUGOS: settings.accessoryPrices.wallPlug,
   };
   const accessories = breakdown.materials
@@ -44,7 +47,7 @@ export function calculatePrice(
   const labor = quantity * settings.laborPerUnit;
   const directCost = materials + glass + accessories + labor;
   const margin = directCost * (settings.profitMargin / 100);
-  const subtotal = directCost + margin;
+  const subtotal = directCost + margin + squareFootCharge;
   const tax = subtotal * (settings.taxRate / 100);
 
   return {
@@ -52,6 +55,7 @@ export function calculatePrice(
     glass: money(glass),
     accessories: money(accessories),
     labor: money(labor),
+    squareFootCharge: money(squareFootCharge),
     directCost: money(directCost),
     margin: money(margin),
     subtotal: money(subtotal),
@@ -68,7 +72,8 @@ export function calculateQuoteTotals(
   const directCost =
     items.reduce((sum, item) => sum + item.pricing.directCost, 0) + transport;
   const margin = items.reduce((sum, item) => sum + item.pricing.margin, 0);
-  const subtotal = directCost + margin;
+  const subtotal =
+    items.reduce((sum, item) => sum + item.pricing.subtotal, 0) + transport;
   const tax = subtotal * (taxRate / 100);
   return {
     directCost: money(directCost),

@@ -2,14 +2,26 @@ import { createQuote, createQuoteItem } from "@/application/quoteFactory";
 import {
   AccessoryInput,
   LeafCount,
-  LockType,
   OpeningInput,
   QuoteItem,
-  RailType,
+  RailPosition,
   SYSTEM_IDS,
   SystemId,
+  MeasurementUnit,
 } from "@/domain/models";
-import { SYSTEM_CATALOG, getSystemCatalogItem } from "@/domain/systemCatalog";
+import {
+  SYSTEM_CATALOG,
+  availableLockTypes,
+  getSystemCatalogItem,
+  supportsRails,
+  supportsSquareFootPricing,
+} from "@/domain/systemCatalog";
+import { calculateAutomaticAccessories } from "@/domain/calculations/accessories";
+import {
+  fromInches,
+  inchesToMillimeters,
+  toInches,
+} from "@/domain/calculations/measurement";
 import { useApp } from "@/presentation/AppContext";
 import { Badge, Button, Card, Field, Money, SectionHeader } from "@/presentation/components";
 import { useTheme } from "@/presentation/theme";
@@ -30,28 +42,35 @@ import {
 const EMPTY_ACCESSORIES: AccessoryInput = {
   rubberMeters: 0,
   wheels: 0,
-  lockType: "puño-centro",
+  lockType: "mono",
   locks: 0,
   guideKits: 0,
   weatherstripMeters: 0,
-  installationScrews: 0,
-  fabricationScrews: 0,
-  wallPlugs: 0,
+  screws: 0,
 };
 
-function initialOpening(systemId: SystemId = "P-65"): OpeningInput {
+function initialOpening(
+  systemId: SystemId = "P-65",
+  unit: MeasurementUnit = "in",
+  pricePerSquareFoot = 0,
+): OpeningInput {
   return {
     systemId,
-    leaves: 2,
-    railType: getSystemCatalogItem(systemId).usesRails ? "2-riel" : "no-aplica",
+    leaves: systemId === "AA" ? undefined : 2,
+    bodyCount: systemId === "AA" ? 1 : undefined,
+    railPosition: supportsRails(systemId) ? "interior" : undefined,
+    width: 0,
+    height: 0,
+    unit,
+    widthInches: 0,
+    heightInches: 0,
     widthMm: 0,
     heightMm: 0,
     quantity: 1,
+    pricePerSquareFoot,
     accessories: { ...EMPTY_ACCESSORIES },
   };
 }
-
-type AccessoryNumberKey = Exclude<keyof AccessoryInput, "lockType">;
 
 export default function NewQuoteScreen() {
   const theme = useTheme();
@@ -63,7 +82,9 @@ export default function NewQuoteScreen() {
   const [address, setAddress] = useState("");
   const [projectName, setProjectName] = useState("");
   const [notes, setNotes] = useState("");
-  const [opening, setOpening] = useState(initialOpening());
+  const [opening, setOpening] = useState(() =>
+    initialOpening("P-65", settings.unit, settings.prices.squareFootPrices["P-65"]),
+  );
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -71,41 +92,96 @@ export default function NewQuoteScreen() {
 
   useEffect(() => {
     const selected = SYSTEM_IDS.find((id) => id === requestedSystem);
-    if (selected) setOpening(initialOpening(selected));
-  }, [requestedSystem]);
+    if (selected)
+      setOpening(
+        initialOpening(
+          selected,
+          settings.unit,
+          settings.prices.squareFootPrices[selected],
+        ),
+      );
+  }, [requestedSystem, settings]);
 
   const selectedSystem = getSystemCatalogItem(opening.systemId);
   const itemTotal = useMemo(
     () => items.reduce((sum, item) => sum + item.lineTotal, 0),
     [items],
   );
+  const automaticAccessories = useMemo(
+    () =>
+      calculateAutomaticAccessories(
+        settings.prices.accessoryRules[opening.systemId],
+        opening.systemId === "AA"
+          ? opening.bodyCount ?? opening.leaves ?? 1
+          : opening.leaves ?? 2,
+        opening.quantity,
+        opening.accessories.lockType,
+      ),
+    [
+      opening.systemId,
+      opening.leaves,
+      opening.bodyCount,
+      opening.quantity,
+      opening.accessories.lockType,
+      settings,
+    ],
+  );
 
   const selectSystem = (systemId: SystemId) => {
-    const usesRails = getSystemCatalogItem(systemId).usesRails;
+    const usesRails = supportsRails(systemId);
     setOpening((current) => ({
       ...current,
       systemId,
-      railType: usesRails
-        ? current.railType === "no-aplica"
-          ? "2-riel"
-          : current.railType
-        : "no-aplica",
+      leaves: systemId === "AA" ? undefined : current.leaves ?? 2,
+      bodyCount:
+        systemId === "AA"
+          ? current.bodyCount ?? current.leaves ?? 1
+          : undefined,
+      pricePerSquareFoot: settings.prices.squareFootPrices[systemId],
+      railPosition: usesRails
+        ? current.railPosition ?? "interior"
+        : undefined,
+      accessories: {
+        ...current.accessories,
+        lockType: availableLockTypes(systemId).includes(
+          current.accessories.lockType,
+        )
+          ? current.accessories.lockType
+          : "mono",
+      },
     }));
   };
 
-  const setNumber = (key: "widthMm" | "heightMm" | "quantity", value: string) =>
+  const setNumber = (
+    key: "width" | "height" | "quantity" | "pricePerSquareFoot" | "bodyCount",
+    value: string,
+  ) =>
     setOpening((current) => ({
       ...current,
       [key]: Number(value.replace(",", ".")) || 0,
+      ...(key === "width"
+        ? {
+            widthInches: toInches(Number(value.replace(",", ".")) || 0, current.unit),
+            widthMm: inchesToMillimeters(
+              toInches(Number(value.replace(",", ".")) || 0, current.unit),
+            ),
+          }
+        : key === "height"
+          ? {
+              heightInches: toInches(Number(value.replace(",", ".")) || 0, current.unit),
+              heightMm: inchesToMillimeters(
+                toInches(Number(value.replace(",", ".")) || 0, current.unit),
+              ),
+            }
+          : {}),
     }));
 
-  const setAccessory = (key: AccessoryNumberKey, value: string) =>
+  const selectUnit = (unit: MeasurementUnit) =>
     setOpening((current) => ({
       ...current,
-      accessories: {
-        ...current.accessories,
-        [key]: Number(value.replace(",", ".")) || 0,
-      },
+      unit,
+      width: fromInches(current.widthInches, unit),
+      height: fromInches(current.heightInches, unit),
     }));
 
   const addOrUpdateItem = () => {
@@ -121,7 +197,16 @@ export default function NewQuoteScreen() {
         setItems((current) => [...current, calculated]);
       }
       setEditingId(null);
-      setOpening((current) => ({ ...current, widthMm: 0, heightMm: 0, quantity: 1 }));
+      setOpening((current) => ({
+        ...current,
+        width: 0,
+        height: 0,
+        widthInches: 0,
+        heightInches: 0,
+        widthMm: 0,
+        heightMm: 0,
+        quantity: 1,
+      }));
     } catch (error) {
       Alert.alert(
         "Revisa las medidas",
@@ -131,13 +216,32 @@ export default function NewQuoteScreen() {
   };
 
   const editItem = (item: QuoteItem) => {
-    setOpening({ ...item.opening, accessories: { ...item.opening.accessories } });
+    const lockType = availableLockTypes(item.opening.systemId).includes(
+      item.opening.accessories.lockType,
+    )
+      ? item.opening.accessories.lockType
+      : "mono";
+    const unit: MeasurementUnit =
+      item.opening.unit === "cm" ? "cm" : "in";
+    setOpening({
+      ...item.opening,
+      unit,
+      width: fromInches(item.opening.widthInches, unit),
+      height: fromInches(item.opening.heightInches, unit),
+      accessories: { ...item.opening.accessories, lockType },
+    });
     setEditingId(item.id);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setOpening(initialOpening(opening.systemId));
+    setOpening(
+      initialOpening(
+        opening.systemId,
+        settings.unit,
+        settings.prices.squareFootPrices[opening.systemId],
+      ),
+    );
   };
 
   const saveAndView = async () => {
@@ -192,7 +296,30 @@ export default function NewQuoteScreen() {
           </View>
         </View>
 
-        <SectionHeader title="1. Selecciona el sistema" />
+        <SectionHeader title="1. Datos del trabajo" />
+        <Card>
+          <View style={styles.fieldsRow}>
+            <View style={styles.clientField}>
+              <Field label="Cliente *" value={clientName} onChangeText={setClientName} placeholder="Nombre del cliente" />
+            </View>
+            <View style={styles.clientField}>
+              <Field label="Proyecto" value={projectName} onChangeText={setProjectName} placeholder="Nombre o referencia" />
+            </View>
+            <View style={styles.clientField}>
+              <Field label="Teléfono" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            </View>
+          </View>
+          <View style={styles.fieldsRow}>
+            <View style={styles.clientField}>
+              <Field label="Dirección" value={address} onChangeText={setAddress} />
+            </View>
+            <View style={styles.clientField}>
+              <Field label="Observaciones" value={notes} onChangeText={setNotes} />
+            </View>
+          </View>
+        </Card>
+
+        <SectionHeader title="2. Sistema seleccionado" action={selectedSystem.label} />
         <View style={styles.systemGrid}>
           {SYSTEM_CATALOG.map((system) => {
             const selected = system.id === opening.systemId;
@@ -221,36 +348,79 @@ export default function NewQuoteScreen() {
 
         <View style={[styles.workspace, twoColumns && styles.workspaceWide]}>
           <View style={styles.formColumn}>
-            <SectionHeader title="2. Define la medida" action={selectedSystem.label} />
+            <SectionHeader title="3. Agrega una medida" action={selectedSystem.label} />
             <Card style={editingId ? { borderColor: theme.brandRed, borderWidth: 2 } : undefined}>
               {editingId && <Badge label="Editando medida" tone="red" />}
-              <Text style={[styles.fieldLabel, { color: theme.muted }]}>CANTIDAD DE HOJAS</Text>
-              <View style={styles.chips}>
-                {([2, 3, 4] as LeafCount[]).map((leaves) => (
-                  <Chip
-                    key={leaves}
-                    label={`${leaves} hojas`}
-                    selected={opening.leaves === leaves}
-                    onPress={() => setOpening((current) => ({ ...current, leaves }))}
+              {opening.systemId === "AA" ? (
+                <View style={styles.measureField}>
+                  <Field
+                    label="Cantidad de cuerpos"
+                    value={String(opening.bodyCount ?? opening.leaves ?? "")}
+                    onChangeText={(value) => setNumber("bodyCount", value)}
+                    keyboardType="number-pad"
+                    placeholder="1"
                   />
-                ))}
-              </View>
-
-              {selectedSystem.usesRails && (
+                </View>
+              ) : (
                 <>
-                  <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIPO DE RIEL</Text>
+                  <Text style={[styles.fieldLabel, { color: theme.muted }]}>CANTIDAD DE HOJAS</Text>
                   <View style={styles.chips}>
-                    {(["2-riel", "3-riel", "monorriel"] as RailType[]).map((railType) => (
+                    {([2, 3, 4] as LeafCount[]).map((leaves) => (
                       <Chip
-                        key={railType}
-                        label={railType}
-                        selected={opening.railType === railType}
-                        onPress={() => setOpening((current) => ({ ...current, railType }))}
+                        key={leaves}
+                        label={`${leaves} hojas`}
+                        selected={opening.leaves === leaves}
+                        onPress={() =>
+                          setOpening((current) => ({ ...current, leaves }))
+                        }
                       />
                     ))}
                   </View>
                 </>
               )}
+
+              {supportsRails(opening.systemId) && (
+                <>
+                  <Text style={[styles.fieldLabel, { color: theme.muted }]}>POSICIÓN DEL RIEL</Text>
+                  <View style={styles.chips}>
+                    {(
+                      [
+                        ["interior", "Int."],
+                        ["exterior", "Ext."],
+                      ] as [RailPosition, string][]
+                    ).map(([railPosition, label]) => (
+                        <Chip
+                          key={railPosition}
+                          label={label}
+                          selected={opening.railPosition === railPosition}
+                          onPress={() =>
+                            setOpening((current) => ({
+                              ...current,
+                              railPosition,
+                            }))
+                          }
+                        />
+                    ))}
+                  </View>
+                </>
+              )}
+
+              <Text style={[styles.fieldLabel, { color: theme.muted }]}>UNIDAD DE MEDIDA</Text>
+              <View style={styles.chips}>
+                {(
+                  [
+                    ["in", "Pulgadas"],
+                    ["cm", "Centímetros"],
+                  ] as [MeasurementUnit, string][]
+                ).map(([unit, label]) => (
+                  <Chip
+                    key={unit}
+                    label={label}
+                    selected={opening.unit === unit}
+                    onPress={() => selectUnit(unit)}
+                  />
+                ))}
+              </View>
 
               <View style={styles.fieldsRow}>
                 <View style={styles.measureField}>
@@ -264,22 +434,32 @@ export default function NewQuoteScreen() {
                 </View>
                 <View style={styles.measureField}>
                   <Field
-                    label="Ancho (mm)"
-                    value={opening.widthMm ? String(opening.widthMm) : ""}
-                    onChangeText={(value) => setNumber("widthMm", value)}
+                    label={`Ancho (${opening.unit})`}
+                    value={opening.width ? String(opening.width) : ""}
+                    onChangeText={(value) => setNumber("width", value)}
                     keyboardType="numeric"
-                    placeholder="1200"
+                    placeholder={opening.unit === "in" ? "48" : "0"}
                   />
                 </View>
                 <View style={styles.measureField}>
                   <Field
-                    label="Alto (mm)"
-                    value={opening.heightMm ? String(opening.heightMm) : ""}
-                    onChangeText={(value) => setNumber("heightMm", value)}
+                    label={`Alto (${opening.unit})`}
+                    value={opening.height ? String(opening.height) : ""}
+                    onChangeText={(value) => setNumber("height", value)}
                     keyboardType="numeric"
-                    placeholder="1000"
+                    placeholder={opening.unit === "in" ? "40" : "0"}
                   />
                 </View>
+                {supportsSquareFootPricing(opening.systemId) && (
+                  <View style={styles.measureField}>
+                    <Field
+                      label={`Precio por pie² (${settings.prices.currency})`}
+                      value={String(opening.pricePerSquareFoot)}
+                      onChangeText={(value) => setNumber("pricePerSquareFoot", value)}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                )}
               </View>
 
               <View style={styles.actionRow}>
@@ -300,25 +480,29 @@ export default function NewQuoteScreen() {
             <Card>
               <View style={styles.cardHeading}>
                 <View>
-                  <Text style={[styles.cardTitle, { color: theme.text }]}>Accesorios demostrativos</Text>
+                  <Text style={[styles.cardTitle, { color: theme.text }]}>Accesorios automáticos</Text>
                   <Text style={[styles.cardHelp, { color: theme.muted }]}>
-                    Opcional · consumo por unidad
+                    Calculados por sistema,{" "}
+                    {opening.systemId === "AA" ? "cuerpos" : "hojas"},
+                    ventanas y cerradura
                   </Text>
                 </View>
                 <Badge label="Configurable" tone="neutral" />
               </View>
               <Text style={[styles.fieldLabel, { color: theme.muted }]}>TIPO DE CIERRE</Text>
               <View style={styles.chips}>
-                {(
-                  [
-                    ["puño-centro", "Puño centro"],
-                    ["monopunto", "Monopunto"],
-                    ["tradicional", "Tradicional"],
-                  ] as [LockType, string][]
-                ).map(([lockType, label]) => (
+                {availableLockTypes(opening.systemId).map((lockType) => (
                   <Chip
                     key={lockType}
-                    label={label}
+                    label={
+                      lockType === "mono"
+                        ? "Mono"
+                        : lockType === "puño"
+                          ? "Puño"
+                          : lockType === "monopunto"
+                            ? "Monopunto"
+                            : "Tradicional"
+                    }
                     selected={opening.accessories.lockType === lockType}
                     onPress={() =>
                       setOpening((current) => ({
@@ -329,18 +513,22 @@ export default function NewQuoteScreen() {
                   />
                 ))}
               </View>
-              <View style={styles.fieldsRow}>
-                <AccessoryField label="Goma (m)" field="rubberMeters" opening={opening} onChange={setAccessory} />
-                <AccessoryField label="Ruedas" field="wheels" opening={opening} onChange={setAccessory} />
-                <AccessoryField label="Cierres" field="locks" opening={opening} onChange={setAccessory} />
-                <AccessoryField label="Kits guías" field="guideKits" opening={opening} onChange={setAccessory} />
-                <AccessoryField label="Felpa (m)" field="weatherstripMeters" opening={opening} onChange={setAccessory} />
+              <View style={styles.autoAccessoryGrid}>
+                <AutomaticAccessory label="Goma" value={automaticAccessories.rubberMeters} unit="m" />
+                <AutomaticAccessory label="Ruedas" value={automaticAccessories.wheels} />
+                <AutomaticAccessory label="Kit de guías" value={automaticAccessories.guideKits} />
+                <AutomaticAccessory label="Felpa" value={automaticAccessories.weatherstripMeters} unit="m" />
+                <AutomaticAccessory label="Tornillos" value={automaticAccessories.screws} />
+                <AutomaticAccessory
+                  label={`Cerradura ${opening.accessories.lockType}`}
+                  value={automaticAccessories.locks}
+                />
               </View>
             </Card>
           </View>
 
           <View style={styles.listColumn}>
-            <SectionHeader title="3. Medidas agregadas" action={`${items.length} total`} />
+            <SectionHeader title="4. Medidas agregadas" action={`${items.length} total`} />
             {items.length === 0 ? (
               <Card>
                 <Text style={[styles.emptyTitle, { color: theme.text }]}>Aún no hay medidas</Text>
@@ -359,12 +547,21 @@ export default function NewQuoteScreen() {
                       <View style={{ flex: 1 }}>
                         <Text style={[styles.measureTitle, { color: theme.text }]}>{item.opening.systemId}</Text>
                         <Text style={{ color: theme.muted }}>
-                          {item.opening.widthMm} × {item.opening.heightMm} mm · {item.opening.quantity} ud.
+                          {item.opening.width} × {item.opening.height} {item.opening.unit} · {item.opening.quantity} ud.
                         </Text>
+                        {item.squareFoot && (
+                          <Text style={[styles.measureMeta, { color: theme.primary }]}>
+                            {item.squareFoot.individualArea} pie² c/u · {item.squareFoot.totalArea} pie² total ·{" "}
+                            {item.squareFoot.pricePerSquareFoot} /pie² · total{" "}
+                            {item.squareFoot.total}
+                          </Text>
+                        )}
                         <Text style={[styles.measureMeta, { color: theme.muted }]}>
-                          {item.opening.leaves} hojas
-                          {item.opening.railType && item.opening.railType !== "no-aplica"
-                            ? ` · ${item.opening.railType}`
+                          {item.opening.systemId === "AA"
+                            ? `${item.opening.bodyCount ?? item.opening.leaves ?? 1} cuerpos`
+                            : `${item.opening.leaves ?? 2} hojas`}
+                          {item.opening.railPosition
+                            ? ` · ${item.opening.railPosition === "interior" ? "Int." : "Ext."}`
                             : ""}
                         </Text>
                       </View>
@@ -389,29 +586,6 @@ export default function NewQuoteScreen() {
           </View>
         </View>
 
-        <SectionHeader title="4. Datos del trabajo" />
-        <Card>
-          <View style={styles.fieldsRow}>
-            <View style={styles.clientField}>
-              <Field label="Cliente *" value={clientName} onChangeText={setClientName} placeholder="Nombre del cliente" />
-            </View>
-            <View style={styles.clientField}>
-              <Field label="Proyecto" value={projectName} onChangeText={setProjectName} placeholder="Nombre o referencia" />
-            </View>
-            <View style={styles.clientField}>
-              <Field label="Teléfono" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-            </View>
-          </View>
-          <View style={styles.fieldsRow}>
-            <View style={styles.clientField}>
-              <Field label="Dirección" value={address} onChangeText={setAddress} />
-            </View>
-            <View style={styles.clientField}>
-              <Field label="Observaciones" value={notes} onChangeText={setNotes} />
-            </View>
-          </View>
-        </Card>
-
         <View style={[styles.summaryBar, { backgroundColor: theme.brandBlue }]}>
           <View style={{ flex: 1 }}>
             <Text style={styles.summaryLabel}>ESTIMADO DEMOSTRATIVO</Text>
@@ -433,27 +607,22 @@ export default function NewQuoteScreen() {
   );
 }
 
-function AccessoryField({
+function AutomaticAccessory({
   label,
-  field,
-  opening,
-  onChange,
+  value,
+  unit = "ud.",
 }: {
   label: string;
-  field: AccessoryNumberKey;
-  opening: OpeningInput;
-  onChange(key: AccessoryNumberKey, value: string): void;
+  value: number;
+  unit?: string;
 }) {
-  const value = opening.accessories[field];
+  const theme = useTheme();
   return (
-    <View style={styles.accessoryField}>
-      <Field
-        label={label}
-        value={value ? String(value) : ""}
-        onChangeText={(text) => onChange(field, text)}
-        keyboardType="decimal-pad"
-        placeholder="0"
-      />
+    <View style={[styles.autoAccessory, { backgroundColor: theme.surfaceAlt }]}>
+      <Text style={[styles.cardHelp, { color: theme.muted }]}>{label}</Text>
+      <Text style={[styles.autoAccessoryValue, { color: theme.text }]}>
+        {value} {unit}
+      </Text>
     </View>
   );
 }
@@ -503,7 +672,9 @@ const styles = StyleSheet.create({
   chip: { minHeight: 40, justifyContent: "center", borderRadius: 11, borderWidth: 1, paddingHorizontal: 14 },
   fieldsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   measureField: { flexGrow: 1, flexBasis: 140 },
-  accessoryField: { flexGrow: 1, flexBasis: 120 },
+  autoAccessoryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  autoAccessory: { flexGrow: 1, flexBasis: 120, borderRadius: 11, padding: 11, gap: 3 },
+  autoAccessoryValue: { fontWeight: "900", fontSize: 15 },
   clientField: { flexGrow: 1, flexBasis: 220 },
   actionRow: { flexDirection: "row", gap: 10 },
   cardHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },

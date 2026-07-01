@@ -21,7 +21,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
   const wide = width >= 760;
-  const cardWidth = width >= 1280 ? "23.5%" : wide ? "31.5%" : "48%";
+  const cardWidth = width >= 1280 ? "23.5%" : wide ? "31.5%" : width >= 520 ? "48%" : "100%";
 
   const updateSearch = (value: string) => {
     setSearch(value);
@@ -37,8 +37,13 @@ export default function HomeScreen() {
       <View style={[styles.banner, { backgroundColor: theme.brandBlue }]}>
         <View style={styles.bannerAccent} />
         <View style={styles.bannerContent}>
-          <Badge label="MAC · Taller digital" tone="red" />
-          <Text style={styles.bannerTitle}>Desgloses claros.{"\n"}Trabajos más rápidos.</Text>
+          <View style={styles.brandLine}>
+            <View style={[styles.bannerLogo, { backgroundColor: theme.brandRed }]}>
+              <Text style={styles.bannerLogoText}>MAC</Text>
+            </View>
+            <Text style={styles.brandName}>Mac Desgloses</Text>
+          </View>
+          <Text style={styles.bannerTitle}>Medidas claras.{"\n"}Trabajos más rápidos.</Text>
           <Text style={styles.bannerText}>
             Cotiza, organiza medidas y prepara materiales desde cualquier dispositivo.
           </Text>
@@ -73,7 +78,7 @@ export default function HomeScreen() {
 
       <SectionHeader title="Sistemas disponibles" action={`${SYSTEM_CATALOG.length} opciones`} />
       <View style={styles.systemGrid}>
-        {SYSTEM_CATALOG.map((system, index) => (
+        {SYSTEM_CATALOG.map((system) => (
           <Pressable
             key={system.id}
             onPress={() =>
@@ -89,23 +94,14 @@ export default function HomeScreen() {
               },
             ]}
           >
-            <View
-              style={[
-                styles.systemIcon,
-                { backgroundColor: system.accent === "red" ? `${theme.brandRed}18` : theme.primarySoft },
-              ]}
-            >
-              <Text style={{ color: system.accent === "red" ? theme.brandRed : theme.primary, fontWeight: "900" }}>
-                {String(index + 1).padStart(2, "0")}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
+            <SystemGlyph category={system.category} accent={system.accent} />
+            <View style={styles.systemInfo}>
               <Text style={[styles.systemTitle, { color: theme.text }]}>{system.label}</Text>
-              <Text style={[styles.systemMeta, { color: theme.muted }]}>
-                {system.category} · Plantilla demo
-              </Text>
+              <Badge label="Configurable" tone="neutral" />
             </View>
-            <Text style={[styles.arrow, { color: theme.primary }]}>›</Text>
+            <View style={[styles.addButton, { backgroundColor: theme.primary }]}>
+              <Text style={styles.addButtonText}>+</Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -155,11 +151,33 @@ export default function HomeScreen() {
   );
 }
 
+function SystemGlyph({
+  category,
+  accent,
+}: {
+  category: "Ventana" | "Puerta";
+  accent: "blue" | "red";
+}) {
+  const theme = useTheme();
+  const color = accent === "red" ? theme.brandRed : theme.primary;
+  return (
+    <View style={[styles.systemIcon, { backgroundColor: `${color}12`, borderColor: color }]}>
+      <View style={[category === "Puerta" ? styles.doorShape : styles.windowShape, { borderColor: color }]}>
+        <View style={[styles.glyphDivider, { backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   page: { width: "100%", maxWidth: 1440, alignSelf: "center", padding: 20, gap: 20, paddingBottom: 54 },
   banner: { minHeight: 285, borderRadius: 28, overflow: "hidden", flexDirection: "row", position: "relative" },
   bannerAccent: { position: "absolute", width: 120, top: 0, bottom: 0, right: 0, backgroundColor: "#D62828", transform: [{ skewX: "-13deg" }, { translateX: 42 }] },
   bannerContent: { flex: 1, padding: 28, gap: 14, zIndex: 2, justifyContent: "center" },
+  brandLine: { flexDirection: "row", alignItems: "center", gap: 12 },
+  bannerLogo: { width: 48, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+  bannerLogoText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900", letterSpacing: 0.8 },
+  brandName: { color: "#FFFFFF", fontSize: 20, fontWeight: "900" },
   bannerTitle: { color: "#FFFFFF", fontSize: 34, lineHeight: 39, fontWeight: "900", letterSpacing: -0.7 },
   bannerText: { color: "#DCE7F8", fontSize: 15, lineHeight: 22, maxWidth: 570 },
   bannerActions: { flexDirection: "row", alignItems: "center", gap: 20, flexWrap: "wrap" },
@@ -172,11 +190,15 @@ const styles = StyleSheet.create({
   graphicCaption: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", letterSpacing: 1.6 },
   searchRow: { flexDirection: "row", alignItems: "flex-end", gap: 12 },
   systemGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  systemCard: { minHeight: 102, borderWidth: 1, borderRadius: 18, padding: 14, flexDirection: "row", alignItems: "center", gap: 12 },
-  systemIcon: { width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  systemTitle: { fontSize: 14, fontWeight: "900", lineHeight: 18 },
-  systemMeta: { fontSize: 11, marginTop: 4 },
-  arrow: { fontSize: 27, fontWeight: "500" },
+  systemCard: { minHeight: 126, borderWidth: 1, borderRadius: 18, padding: 16, flexDirection: "row", alignItems: "center", gap: 13 },
+  systemIcon: { width: 54, height: 54, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  systemInfo: { flex: 1, alignItems: "flex-start", gap: 8 },
+  systemTitle: { fontSize: 15, fontWeight: "900", lineHeight: 19 },
+  addButton: { width: 42, height: 42, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  addButtonText: { color: "#FFFFFF", fontSize: 27, lineHeight: 30, fontWeight: "700" },
+  windowShape: { width: 30, height: 25, borderWidth: 2, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  doorShape: { width: 22, height: 32, borderWidth: 2, alignItems: "flex-end", justifyContent: "center" },
+  glyphDivider: { width: 2, height: "100%" },
   recentList: { gap: 10 },
   jobCard: { padding: 0, flexDirection: "row", overflow: "hidden" },
   jobStripe: { width: 5 },

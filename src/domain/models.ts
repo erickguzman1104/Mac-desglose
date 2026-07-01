@@ -1,5 +1,4 @@
 export const SYSTEM_IDS = [
-  "Protectores Aluestrong",
   "P-65",
   "AA",
   "M-100 sin tapa",
@@ -14,9 +13,24 @@ export const SYSTEM_IDS = [
 
 export type SystemId = (typeof SYSTEM_IDS)[number];
 export type LeafCount = 2 | 3 | 4;
-export type RailType = "2-riel" | "3-riel" | "monorriel" | "no-aplica";
+export type RailPosition = "interior" | "exterior";
 export type QuoteStatus = "draft" | "approved" | "cancelled";
-export type LockType = "puño-centro" | "monopunto" | "tradicional";
+export type LockType = "mono" | "puño" | "tradicional" | "monopunto";
+export type MeasurementUnit = "in" | "cm";
+
+export interface AccessoryQuantityRule {
+  perWindow: number;
+  perLeaf: number;
+}
+
+export interface SystemAccessoryRules {
+  rubberMeters: AccessoryQuantityRule;
+  wheels: AccessoryQuantityRule;
+  guideKits: AccessoryQuantityRule;
+  weatherstripMeters: AccessoryQuantityRule;
+  screws: AccessoryQuantityRule;
+  locksByType: Record<LockType, AccessoryQuantityRule>;
+}
 
 export interface Client {
   id: string;
@@ -52,6 +66,8 @@ export interface PriceSettings {
   profilePricePerMeter: number;
   glassPricePerSquareMeter: number;
   accessoryUnitPrice: number;
+  squareFootPrices: Record<SystemId, number>;
+  accessoryRules: Record<SystemId, SystemAccessoryRules>;
   accessoryPrices: {
     rubberPerMeter: number;
     wheel: number;
@@ -71,17 +87,24 @@ export interface PriceSettings {
 export interface AppSettings {
   company: Company;
   prices: PriceSettings;
-  unit: "mm";
+  unit: MeasurementUnit;
   colorScheme: "system" | "light" | "dark";
 }
 
 export interface OpeningInput {
   systemId: SystemId;
-  leaves: LeafCount;
-  railType?: RailType;
+  leaves?: LeafCount;
+  bodyCount?: number;
+  railPosition?: RailPosition;
+  width: number;
+  height: number;
+  unit: MeasurementUnit;
+  widthInches: number;
+  heightInches: number;
   widthMm: number;
   heightMm: number;
   quantity: number;
+  pricePerSquareFoot: number;
   accessories: AccessoryInput;
 }
 
@@ -92,9 +115,14 @@ export interface AccessoryInput {
   locks: number;
   guideKits: number;
   weatherstripMeters: number;
-  installationScrews: number;
-  fabricationScrews: number;
-  wallPlugs: number;
+  screws: number;
+}
+
+export interface SquareFootBreakdown {
+  individualArea: number;
+  totalArea: number;
+  pricePerSquareFoot: number;
+  total: number;
 }
 
 export interface MaterialCut {
@@ -134,6 +162,7 @@ export interface PriceBreakdown {
   glass: number;
   accessories: number;
   labor: number;
+  squareFootCharge: number;
   directCost: number;
   margin: number;
   subtotal: number;
@@ -147,6 +176,7 @@ export interface QuoteItem {
   opening: OpeningInput;
   breakdown: MaterialBreakdown;
   pricing: PriceBreakdown;
+  squareFoot?: SquareFootBreakdown;
   unitPrice: number;
   lineTotal: number;
 }

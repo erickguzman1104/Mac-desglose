@@ -1,13 +1,26 @@
 import { GLASS_SHEET_SIZES } from "@/domain/calculations/glassOptimizer";
-import { AppSettings } from "@/domain/models";
-import { SYSTEM_CATALOG } from "@/domain/systemCatalog";
+import {
+  AppSettings,
+  LockType,
+  MeasurementUnit,
+  SystemAccessoryRules,
+} from "@/domain/models";
+import {
+  SYSTEM_CATALOG,
+  availableLockTypes,
+  supportsSquareFootPricing,
+} from "@/domain/systemCatalog";
 import { useApp } from "@/presentation/AppContext";
 import { Badge, Button, Card, Field, SectionHeader } from "@/presentation/components";
 import { useTheme } from "@/presentation/theme";
 import { router } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { useState } from "react";
 import {
   Alert,
+  Image,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -29,8 +42,38 @@ export default function SettingsScreen() {
       company: { ...current.company, [key]: value },
     }));
 
+  const selectLogo = async () => {
+    if (Platform.OS !== "web") {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Permiso requerido",
+          "Permite el acceso a tus fotos para seleccionar el logo.",
+        );
+        return;
+      }
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      quality: 0.8,
+      base64: true,
+    });
+    if (result.canceled) return;
+
+    const asset = result.assets[0];
+    const logoUri = asset.base64
+      ? `data:${asset.mimeType ?? "image/jpeg"};base64,${asset.base64}`
+      : asset.uri;
+    setCompany("logoUri", logoUri);
+  };
+
   const setPrice = (
-    key: Exclude<keyof AppSettings["prices"], "accessoryPrices">,
+    key: Exclude<
+      keyof AppSettings["prices"],
+      "accessoryPrices" | "squareFootPrices" | "accessoryRules"
+    >,
     value: string,
   ) =>
     setDraft((current) => ({
@@ -39,6 +82,67 @@ export default function SettingsScreen() {
         ...current.prices,
         [key]:
           key === "currency" ? value.toUpperCase() : Number(value.replace(",", ".")) || 0,
+      },
+    }));
+
+  const setSquareFootPrice = (systemId: keyof AppSettings["prices"]["squareFootPrices"], value: string) =>
+    setDraft((current) => ({
+      ...current,
+      prices: {
+        ...current.prices,
+        squareFootPrices: {
+          ...current.prices.squareFootPrices,
+          [systemId]: Number(value.replace(",", ".")) || 0,
+        },
+      },
+    }));
+
+  const setAccessoryRule = (
+    systemId: keyof AppSettings["prices"]["accessoryRules"],
+    accessory: keyof Omit<SystemAccessoryRules, "locksByType">,
+    factor: "perWindow" | "perLeaf",
+    value: string,
+  ) =>
+    setDraft((current) => ({
+      ...current,
+      prices: {
+        ...current.prices,
+        accessoryRules: {
+          ...current.prices.accessoryRules,
+          [systemId]: {
+            ...current.prices.accessoryRules[systemId],
+            [accessory]: {
+              ...current.prices.accessoryRules[systemId][accessory],
+              [factor]: Number(value.replace(",", ".")) || 0,
+            },
+          },
+        },
+      },
+    }));
+
+  const setLockRule = (
+    systemId: keyof AppSettings["prices"]["accessoryRules"],
+    lockType: LockType,
+    factor: "perWindow" | "perLeaf",
+    value: string,
+  ) =>
+    setDraft((current) => ({
+      ...current,
+      prices: {
+        ...current.prices,
+        accessoryRules: {
+          ...current.prices.accessoryRules,
+          [systemId]: {
+            ...current.prices.accessoryRules[systemId],
+            locksByType: {
+              ...current.prices.accessoryRules[systemId].locksByType,
+              [lockType]: {
+                ...current.prices.accessoryRules[systemId].locksByType[lockType],
+                [factor]: Number(value.replace(",", ".")) || 0,
+              },
+            },
+          },
+        },
       },
     }));
 
@@ -108,16 +212,64 @@ export default function SettingsScreen() {
               </SettingField>
             </View>
             <Field label="Dirección" value={draft.company.address} onChangeText={(value) => setCompany("address", value)} />
-            <Field
-              label="URL del logo"
-              value={draft.company.logoUri ?? ""}
-              onChangeText={(value) => setCompany("logoUri", value)}
-              placeholder="https://... o archivo local"
-            />
+            <View style={styles.companyLogoRow}>
+              <View style={[styles.companyLogoPreview, { borderColor: theme.border }]}>
+                {draft.company.logoUri ? (
+                  <Image
+                    source={{ uri: draft.company.logoUri }}
+                    style={styles.companyLogoImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Text style={[styles.logoPlaceholder, { color: theme.muted }]}>
+                    Sin logo
+                  </Text>
+                )}
+              </View>
+              <View style={styles.logoActions}>
+                <Button title="Seleccionar imagen" onPress={() => void selectLogo()} />
+                {draft.company.logoUri && (
+                  <Button
+                    title="Quitar logo"
+                    variant="secondary"
+                    onPress={() => setCompany("logoUri", "")}
+                  />
+                )}
+                <Text style={[styles.helperText, { color: theme.muted }]}>
+                  Se guarda localmente con la configuración y queda disponible
+                  para futuras cotizaciones y PDF.
+                </Text>
+              </View>
+            </View>
           </Card>
 
           <SectionHeader title="Valores generales" action="Plantilla demostrativa" />
           <Card>
+            <Text style={{ color: theme.muted }}>Unidad predeterminada</Text>
+            <View style={styles.unitRow}>
+              {(
+                [
+                  ["in", "Pulgadas"],
+                  ["cm", "Centímetros"],
+                ] as [MeasurementUnit, string][]
+              ).map(([unit, label]) => (
+                <Pressable
+                  key={unit}
+                  onPress={() => setDraft((current) => ({ ...current, unit }))}
+                  style={[
+                    styles.unitButton,
+                    {
+                      backgroundColor: draft.unit === unit ? theme.primary : theme.surfaceAlt,
+                      borderColor: draft.unit === unit ? theme.primary : theme.border,
+                    },
+                  ]}
+                >
+                  <Text style={{ color: draft.unit === unit ? "#FFFFFF" : theme.text, fontWeight: "800" }}>
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
             <View style={styles.fieldsRow}>
               <SettingField>
                 <Field label="Moneda" value={draft.prices.currency} onChangeText={(value) => setPrice("currency", value)} />
@@ -201,24 +353,61 @@ export default function SettingsScreen() {
             </Text>
           </Card>
 
-          <SectionHeader title="Valores por sistema" />
+          <SectionHeader title="Precio por pie² y reglas por sistema" />
           <Card>
             <Text style={[styles.helperText, { color: theme.muted }]}>
-              Todos usan temporalmente la tarifa general. No se aplican fórmulas definitivas.
+              Cada cantidad se calcula como (por ventana + por hoja × hojas) × ventanas.
+              Los valores iniciales son cero hasta que el taller defina sus reglas.
             </Text>
             <View style={styles.systemList}>
-              {SYSTEM_CATALOG.map((system) => (
-                <View key={system.id} style={[styles.systemRow, { borderBottomColor: theme.border }]}>
-                  <View style={[styles.systemDot, { backgroundColor: system.accent === "red" ? theme.brandRed : theme.brandBlue }]} />
-                  <View style={{ flex: 1 }}>
+              {SYSTEM_CATALOG.map((system) => {
+                const rules = draft.prices.accessoryRules[system.id];
+                return (
+                  <View key={system.id} style={[styles.ruleCard, { borderColor: theme.border }]}>
                     <Text style={[styles.systemName, { color: theme.text }]}>{system.label}</Text>
-                    <Text style={{ color: theme.muted, fontSize: 11 }}>
-                      {draft.prices.profilePricePerMeter} {draft.prices.currency}/m · demo
-                    </Text>
+                    {supportsSquareFootPricing(system.id) && (
+                      <Field
+                        label={`Precio por pie² (${draft.prices.currency})`}
+                        value={String(draft.prices.squareFootPrices[system.id])}
+                        onChangeText={(value) => setSquareFootPrice(system.id, value)}
+                        keyboardType="decimal-pad"
+                      />
+                    )}
+                    <View style={styles.ruleGrid}>
+                      {(
+                        [
+                          ["rubberMeters", "Goma"],
+                          ["wheels", "Ruedas"],
+                          ["guideKits", "Kit guías"],
+                          ["weatherstripMeters", "Felpa"],
+                          ["screws", "Tornillos"],
+                        ] as [keyof Omit<SystemAccessoryRules, "locksByType">, string][]
+                      ).map(([key, label]) => (
+                        <RuleFields
+                          key={key}
+                          label={label}
+                          perWindow={rules[key].perWindow}
+                          perLeaf={rules[key].perLeaf}
+                          partLabel={system.id === "AA" ? "Por cuerpo" : "Por hoja"}
+                          onWindow={(value) => setAccessoryRule(system.id, key, "perWindow", value)}
+                          onLeaf={(value) => setAccessoryRule(system.id, key, "perLeaf", value)}
+                        />
+                      ))}
+                      {availableLockTypes(system.id).map((lockType) => (
+                        <RuleFields
+                          key={lockType}
+                          label={`Cerradura ${lockType}`}
+                          perWindow={rules.locksByType[lockType].perWindow}
+                          perLeaf={rules.locksByType[lockType].perLeaf}
+                          partLabel={system.id === "AA" ? "Por cuerpo" : "Por hoja"}
+                          onWindow={(value) => setLockRule(system.id, lockType, "perWindow", value)}
+                          onLeaf={(value) => setLockRule(system.id, lockType, "perLeaf", value)}
+                        />
+                      ))}
+                    </View>
                   </View>
-                  <Badge label="Base" tone="neutral" />
-                </View>
-              ))}
+                );
+              })}
             </View>
           </Card>
 
@@ -282,6 +471,40 @@ function AccessoryPriceField({
   );
 }
 
+function RuleFields({
+  label,
+  perWindow,
+  perLeaf,
+  onWindow,
+  onLeaf,
+  partLabel = "Por hoja",
+}: {
+  label: string;
+  perWindow: number;
+  perLeaf: number;
+  partLabel?: string;
+  onWindow(value: string): void;
+  onLeaf(value: string): void;
+}) {
+  return (
+    <View style={styles.ruleFields}>
+      <Text style={styles.ruleLabel}>{label}</Text>
+      <Field
+        label="Por ventana"
+        value={String(perWindow)}
+        onChangeText={onWindow}
+        keyboardType="decimal-pad"
+      />
+      <Field
+        label={partLabel}
+        value={String(perLeaf)}
+        onChangeText={onLeaf}
+        keyboardType="decimal-pad"
+      />
+    </View>
+  );
+}
+
 function ColorSwatch({
   name,
   color,
@@ -315,8 +538,15 @@ const styles = StyleSheet.create({
   mainColumn: { flex: 1.35, gap: 14, minWidth: 0 },
   sideColumn: { flex: 0.75, gap: 14, minWidth: 0 },
   fieldsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  unitRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  unitButton: { borderWidth: 1, borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10 },
   settingField: { flexGrow: 1, flexBasis: 190 },
   accessoryField: { flexGrow: 1, flexBasis: 150 },
+  companyLogoRow: { flexDirection: "row", flexWrap: "wrap", gap: 14, alignItems: "center" },
+  companyLogoPreview: { width: 140, height: 100, borderWidth: 1, borderRadius: 14, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  companyLogoImage: { width: "100%", height: "100%" },
+  logoPlaceholder: { fontSize: 12, fontWeight: "800" },
+  logoActions: { flex: 1, minWidth: 220, gap: 8 },
   logoPreview: { flexDirection: "row", alignItems: "center", gap: 12 },
   logoMark: { width: 58, height: 58, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   logoText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900", letterSpacing: 1 },
@@ -327,6 +557,10 @@ const styles = StyleSheet.create({
   swatchName: { fontSize: 11, fontWeight: "800" },
   helperText: { fontSize: 12, lineHeight: 18 },
   systemList: { gap: 2 },
+  ruleCard: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 10 },
+  ruleGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  ruleFields: { flexGrow: 1, flexBasis: 180, gap: 6 },
+  ruleLabel: { fontWeight: "900", fontSize: 12 },
   systemRow: { flexDirection: "row", alignItems: "center", gap: 9, paddingVertical: 9, borderBottomWidth: 1 },
   systemDot: { width: 8, height: 8, borderRadius: 4 },
   systemName: { fontSize: 12, fontWeight: "800" },

@@ -1,4 +1,35 @@
-import { AppSettings, QuoteTotals } from "./models";
+import {
+  AppSettings,
+  LockType,
+  QuoteTotals,
+  SYSTEM_IDS,
+  SystemAccessoryRules,
+  SystemId,
+} from "./models";
+
+const emptyQuantityRule = () => ({ perWindow: 0, perLeaf: 0 });
+
+const emptyAccessoryRules = (): SystemAccessoryRules => ({
+  rubberMeters: emptyQuantityRule(),
+  wheels: emptyQuantityRule(),
+  guideKits: emptyQuantityRule(),
+  weatherstripMeters: emptyQuantityRule(),
+  screws: emptyQuantityRule(),
+  locksByType: Object.fromEntries(
+    (["mono", "puño", "tradicional", "monopunto"] as LockType[]).map((type) => [
+      type,
+      emptyQuantityRule(),
+    ]),
+  ) as SystemAccessoryRules["locksByType"],
+});
+
+export const DEFAULT_SQUARE_FOOT_PRICES = Object.fromEntries(
+  SYSTEM_IDS.map((id) => [id, 0]),
+) as Record<SystemId, number>;
+
+export const DEFAULT_ACCESSORY_RULES = Object.fromEntries(
+  SYSTEM_IDS.map((id) => [id, emptyAccessoryRules()]),
+) as Record<SystemId, SystemAccessoryRules>;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   company: {
@@ -16,6 +47,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     profilePricePerMeter: 350,
     glassPricePerSquareMeter: 1800,
     accessoryUnitPrice: 150,
+    squareFootPrices: DEFAULT_SQUARE_FOOT_PRICES,
+    accessoryRules: DEFAULT_ACCESSORY_RULES,
     accessoryPrices: {
       rubberPerMeter: 0,
       wheel: 0,
@@ -31,7 +64,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     laborPerUnit: 1200,
     transport: 0,
   },
-  unit: "mm",
+  unit: "in",
   colorScheme: "system",
 };
 

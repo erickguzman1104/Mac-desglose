@@ -1,6 +1,6 @@
 import { optimizeCuts } from "@/domain/calculations/cutOptimizer";
 import { compareGlassSheetSizes } from "@/domain/calculations/glassOptimizer";
-import { Quote } from "@/domain/models";
+import { MaterialCut, Quote } from "@/domain/models";
 import { useApp } from "@/presentation/AppContext";
 import { Badge, Button, Card, Money, SectionHeader } from "@/presentation/components";
 import { GlassSheetSketch } from "@/presentation/GlassSheetSketch";
@@ -17,45 +17,73 @@ import {
   useWindowDimensions,
 } from "react-native";
 
+const round = (value: number, precision = 1) =>
+  Math.round(value * 10 ** precision) / 10 ** precision;
+
+function formatFeetAndInches(mm: number) {
+  const totalInches = mm / 25.4;
+  const feet = Math.floor(totalInches / 12);
+  const inches = round(totalInches - feet * 12, 2);
+  return `${feet}′ ${inches}″ (${round(totalInches, 2)} pulg)`;
+}
+
 export default function QuoteSummaryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
   const { width } = useWindowDimensions();
   const { settings, findQuote, saveQuote } = useApp();
   const [quote, setQuote] = useState<Quote | null>();
-  const scrollRef = useRef<ScrollView>(null);
-  const firstItemY = useRef(0);
-  const [optimizerY, setOptimizerY] = useState(0);
   const [converting, setConverting] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const aluminumY = useRef(0);
+  const glassY = useRef(0);
   const wide = width >= 900;
 
   useEffect(() => {
     findQuote(id).then(setQuote);
   }, [findQuote, id]);
 
-  const barsByItem = useMemo(() => {
-    if (!quote) return [];
-    return quote.items.map((item) => {
-      const groups = Object.values(
-        item.breakdown.cuts.reduce<Record<string, typeof item.breakdown.cuts>>(
-          (result, cut) => {
-            (result[cut.materialCode] ??= []).push(cut);
-            return result;
-          },
-          {},
-        ),
-      );
-      return groups.flatMap((cuts) =>
-        optimizeCuts(cuts, quote.settingsSnapshot.barLengthMm).map((bar) => ({
-          ...bar,
-          materialCode: cuts[0].materialCode,
-        })),
-      );
-    });
-  }, [quote]);
+  const projectCuts = useMemo(
+    () => quote?.items.flatMap((item) => item.breakdown.cuts) ?? [],
+    [quote],
+  );
 
-  const glassPlansByItem = useMemo(
-    () => quote?.items.map((item) => compareGlassSheetSizes(item.breakdown.glass)) ?? [],
+  const materialGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { code: string; name: string; cuts: MaterialCut[]; totalMm: number; pieces: number }
+    >();
+    for (const cut of projectCuts) {
+      const group = groups.get(cut.materialCode) ?? {
+        code: cut.materialCode,
+        name: cut.materialName,
+        cuts: [],
+        totalMm: 0,
+        pieces: 0,
+      };
+      group.cuts.push(cut);
+      group.totalMm += cut.lengthMm * cut.pieces;
+      group.pieces += cut.pieces;
+      groups.set(cut.materialCode, group);
+    }
+    return [...groups.values()];
+  }, [projectCuts]);
+
+  const aluminumPlan = useMemo(
+    () =>
+      materialGroups.flatMap((material) =>
+        optimizeCuts(material.cuts, quote?.settingsSnapshot.barLengthMm ?? 6000).map(
+          (bar) => ({ ...bar, materialCode: material.code, materialName: material.name }),
+        ),
+      ),
+    [materialGroups, quote],
+  );
+
+  const glassPlan = useMemo(
+    () =>
+      compareGlassSheetSizes(
+        quote?.items.flatMap((item) => item.breakdown.glass) ?? [],
+      ),
     [quote],
   );
 
@@ -65,13 +93,23 @@ export default function QuoteSummaryScreen() {
   if (quote === null) {
     return (
       <View style={[styles.center, { backgroundColor: theme.background }]}>
-        <Text style={{ color: theme.text }}>No se encontró la cotización.</Text>
+        <Text style={{ color: theme.text }}>No se encontró el trabajo.</Text>
         <Button title="Volver" onPress={() => router.replace("/")} />
       </View>
     );
   }
 
   const currency = quote.settingsSnapshot.currency || settings.prices.currency;
+  const squareFootTotal = quote.items.reduce(
+    (sum, item) => sum + (item.squareFoot?.total ?? 0),
+    0,
+  );
+  const hasMargin = quote.totals.margin > 0;
+  const subtotalBeforeMargin = quote.totals.subtotal - quote.totals.margin;
+  const totalAluminumWaste = aluminumPlan.reduce(
+    (sum, bar) => sum + bar.remainderMm,
+    0,
+  );
 
   const convertToQuote = async () => {
     if (quote.status === "approved") return;
@@ -100,42 +138,42 @@ export default function QuoteSummaryScreen() {
         style={{ backgroundColor: theme.background }}
         contentContainerStyle={styles.page}
       >
-        <SectionHeader title="Resumen del trabajo" action="Datos demostrativos" />
+        <SectionHeader title="Resumen del proyecto" action={quote.number} />
         <View style={[styles.hero, { backgroundColor: theme.brandBlue }]}>
           <View style={styles.heroMain}>
-            <Badge label={`${quote.status === "draft" ? "Borrador" : quote.status}`} tone="red" />
-            <Text style={styles.heroNumber}>{quote.number}</Text>
+            <Badge
+              label={quote.status === "draft" ? "Desglose" : "Cotización"}
+              tone="red"
+            />
             <Text style={styles.heroClient}>{quote.client.name}</Text>
             <Text style={styles.heroMeta}>
-              {quote.projectName} · {quote.date}
-              {quote.client.phone ? ` · ${quote.client.phone}` : ""}
+              {quote.projectName} · {quote.date} · {quote.items.length} medida(s)
             </Text>
           </View>
           <View style={styles.heroTotal}>
-            <Text style={styles.heroTotalLabel}>TOTAL GENERAL</Text>
+            <Text style={styles.heroLabel}>TOTAL</Text>
             <View style={styles.heroMoney}>
               <Money value={quote.totals.total} currency={currency} />
             </View>
-            <Text style={styles.heroTotalMeta}>{quote.items.length} medida(s)</Text>
           </View>
         </View>
 
-        <View style={styles.notice}>
-          <View style={[styles.noticeBar, { backgroundColor: theme.brandRed }]} />
-          <Text style={[styles.noticeText, { color: theme.muted }]}>
-            Desglose demostrativo. Las referencias y descuentos técnicos deben validarse antes de fabricar.
-          </Text>
-        </View>
-
-        <View style={styles.primaryActions}>
-          <View style={styles.primaryAction}>
+        <View style={styles.actions}>
+          <View style={styles.action}>
             <Button
-              title="Optimizador de cortes"
+              title="Ver optimizador de aluminio"
               variant="secondary"
-              onPress={() => scrollRef.current?.scrollTo({ y: optimizerY, animated: true })}
+              onPress={() => scrollRef.current?.scrollTo({ y: aluminumY.current, animated: true })}
             />
           </View>
-          <View style={styles.primaryAction}>
+          <View style={styles.action}>
+            <Button
+              title="Ver optimizador de cristales"
+              variant="secondary"
+              onPress={() => scrollRef.current?.scrollTo({ y: glassY.current, animated: true })}
+            />
+          </View>
+          <View style={styles.action}>
             <Button
               title={
                 quote.status === "approved"
@@ -150,281 +188,270 @@ export default function QuoteSummaryScreen() {
           </View>
         </View>
 
-        {quote.items.map((item, itemIndex) => {
-          const profiles = item.breakdown.materials.filter(({ category }) => category === "profile");
-          const accessories = item.breakdown.materials.filter(({ category }) => category === "accessory");
-          const glassPlan = glassPlansByItem[itemIndex];
+        <View style={[styles.columns, wide && styles.columnsWide]}>
+          <Card style={{ flex: 1 }}>
+            <SectionHeader title="Resumen económico" />
+            <TotalRow label="Precio por pie²" value={squareFootTotal} currency={currency} />
+            <TotalRow label="Subtotal" value={subtotalBeforeMargin} currency={currency} />
+            {hasMargin && (
+              <TotalRow
+                label={`Margen adicional (${quote.settingsSnapshot.profitMargin}%)`}
+                value={quote.totals.margin}
+                currency={currency}
+              />
+            )}
+            <TotalRow
+              label={`ITBIS (${quote.settingsSnapshot.taxRate}%)`}
+              value={quote.totals.tax}
+              currency={currency}
+            />
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+            <TotalRow label="Total" value={quote.totals.total} currency={currency} strong />
+          </Card>
+          <Card style={{ flex: 1 }}>
+            <SectionHeader
+              title="Materiales estimados"
+              action={`${materialGroups.length} referencias`}
+            />
+            {materialGroups.map((material) => (
+              <View
+                key={material.code}
+                style={[styles.row, { borderBottomColor: theme.border }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.rowTitle, { color: theme.text }]}>{material.name}</Text>
+                  <Text style={[styles.code, { color: theme.primary }]}>
+                    {material.code} · {material.pieces} cortes
+                  </Text>
+                </View>
+                <Text style={[styles.value, { color: theme.text }]}>
+                  {formatFeetAndInches(material.totalMm)}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        </View>
+
+        <SectionHeader title="Medidas agregadas" action={`${quote.items.length} total`} />
+        {quote.items.map((item, index) => {
+          const accessories = item.breakdown.materials.filter(
+            ({ category }) => category === "accessory",
+          );
           return (
-            <View
-              key={item.id}
-              style={styles.itemSection}
-              onLayout={
-                itemIndex === 0
-                  ? ({ nativeEvent }) => {
-                      firstItemY.current = nativeEvent.layout.y;
-                    }
-                  : undefined
-              }
-            >
-              <View style={styles.itemHeading}>
-                <View style={[styles.itemIndex, { backgroundColor: theme.brandRed }]}>
-                  <Text style={styles.itemIndexText}>{itemIndex + 1}</Text>
+            <Card key={item.id}>
+              <View style={styles.itemHeader}>
+                <View style={[styles.number, { backgroundColor: theme.brandRed }]}>
+                  <Text style={styles.numberText}>{index + 1}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.itemTitle, { color: theme.text }]}>{item.description}</Text>
                   <Text style={{ color: theme.muted }}>
-                    {item.opening.width ?? item.opening.widthMm} ×{" "}
-                    {item.opening.height ?? item.opening.heightMm}{" "}
-                    {item.opening.unit ?? "mm"} · {item.opening.quantity} ud. ·{" "}
-                    {item.opening.systemId === "AA"
-                      ? `${item.opening.bodyCount ?? item.opening.leaves ?? 1} cuerpos`
-                      : `${item.opening.leaves ?? 2} hojas`}
-                    {item.opening.railPosition
-                      ? ` · ${item.opening.railPosition === "interior" ? "Int." : "Ext."}`
-                      : ""}
+                    {item.opening.width} × {item.opening.height} {item.opening.unit} ·{" "}
+                    {item.opening.quantity} ud.
                   </Text>
                 </View>
                 <Money value={item.lineTotal} currency={currency} />
               </View>
-
-              <View style={[styles.contentGrid, wide && styles.contentGridWide]}>
-                <View style={styles.gridColumn}>
+              <View style={[styles.columns, wide && styles.columnsWide]}>
+                <View style={{ flex: 1, gap: 7 }}>
+                  <Text style={[styles.subheading, { color: theme.text }]}>Precio</Text>
                   {item.squareFoot && (
-                    <Card>
-                      <SectionHeader title="Precio por pies cuadrados" />
-                      <TableHeader columns={["Área individual", "Área total", "Precio / total"]} />
-                      <TableRow
-                        values={[
-                          `${item.squareFoot.individualArea} pie²`,
-                          `${item.squareFoot.totalArea} pie²`,
-                          `${item.squareFoot.pricePerSquareFoot} ${currency}/pie² · ${item.squareFoot.total} ${currency}`,
-                        ]}
-                      />
-                    </Card>
-                  )}
-
-                  <Card>
-                    <SectionHeader title="Materiales calculados" action={`${profiles.length} grupos`} />
-                    <TableHeader columns={["Referencia", "Material", "Cantidad"]} />
-                    {profiles.map((material) => (
-                      <TableRow
-                        key={material.code}
-                        values={[material.code, material.name, `${material.quantity} ${material.unit}`]}
-                      />
-                    ))}
-                  </Card>
-
-                  <Card>
-                    <SectionHeader title="Cortes" action={`${item.breakdown.cuts.length} referencias`} />
-                    <TableHeader columns={["Código", "Uso", "Medida / piezas"]} />
-                    {item.breakdown.cuts.map((cut) => (
-                      <TableRow
-                        key={`${cut.id}-${cut.materialCode}`}
-                        values={[cut.materialCode, cut.purpose, `${cut.lengthMm} mm · ${cut.pieces} pzs`]}
-                      />
-                    ))}
-                  </Card>
-                </View>
-
-                <View style={styles.gridColumn}>
-                  <Card>
-                    <SectionHeader title="Cristales" action={`${item.breakdown.glass.length} medidas`} />
-                    <View style={styles.tileGrid}>
-                      {item.breakdown.glass.map((glass, index) => (
-                        <View key={`${glass.widthMm}-${index}`} style={[styles.dataTile, { backgroundColor: theme.primarySoft }]}>
-                          <Text style={[styles.dataTileLabel, { color: theme.primary }]}>CRISTAL {index + 1}</Text>
-                          <Text style={[styles.dataTileValue, { color: theme.text }]}>
-                            {glass.widthMm} × {glass.heightMm} mm
-                          </Text>
-                          <Text style={{ color: theme.muted }}>
-                            {glass.pieces} piezas · {glass.areaM2} m²
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </Card>
-
-                  <Card>
-                    <SectionHeader title="Accesorios automáticos" action={item.opening.accessories.lockType} />
-                    {item.opening.accessories.screws === undefined ? (
-                      accessories.map((accessory) => (
-                        <View key={accessory.code} style={[styles.cleanRow, { borderBottomColor: theme.border }]}>
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.rowTitle, { color: theme.text }]}>{accessory.name}</Text>
-                            <Text style={[styles.rowCode, { color: theme.muted }]}>{accessory.code}</Text>
-                          </View>
-                          <Text style={[styles.rowValue, { color: theme.primary }]}>
-                            {accessory.quantity} {accessory.unit}
-                          </Text>
-                        </View>
-                      ))
-                    ) : (
-                      [
-                        ["Goma", item.opening.accessories.rubberMeters, "m"],
-                        ["Ruedas", item.opening.accessories.wheels, "ud."],
-                        ["Kit de guías", item.opening.accessories.guideKits, "ud."],
-                        ["Felpa", item.opening.accessories.weatherstripMeters, "m"],
-                        ["Tornillos", item.opening.accessories.screws, "ud."],
-                        [`Cerradura ${item.opening.accessories.lockType}`, item.opening.accessories.locks, "ud."],
-                      ].map(([name, quantity, unit]) => (
-                        <View key={String(name)} style={[styles.cleanRow, { borderBottomColor: theme.border }]}>
-                          <Text style={[styles.rowTitle, { color: theme.text, flex: 1 }]}>{name}</Text>
-                          <Text style={[styles.rowValue, { color: theme.primary }]}>
-                            {quantity} {unit}
-                          </Text>
-                        </View>
-                      ))
-                    )}
-                  </Card>
-                </View>
-              </View>
-
-              <Card style={{ borderColor: theme.primary }}>
-                <View style={styles.optimizerHeading}>
-                  <View style={{ flex: 1 }}>
-                    <Badge label="Optimizador de cristal" tone="blue" />
-                    <Text style={[styles.optimizerTitle, { color: theme.text }]}>Comparación de planchas</Text>
                     <Text style={{ color: theme.muted }}>
-                      Espacio preparado para validar colocación, sobrante y tamaño recomendado.
+                      {item.squareFoot.totalArea} pie² × {item.squareFoot.pricePerSquareFoot}{" "}
+                      {currency} = {item.squareFoot.total} {currency}
                     </Text>
-                  </View>
-                  <Text style={[styles.recommended, { color: theme.primary }]}>
-                    {glassPlan.recommendedSizeId
-                      ? `Recomendada: ${glassPlan.options.find(({ sizeId }) => sizeId === glassPlan.recommendedSizeId)?.label}`
-                      : "Sin recomendación"}
+                  )}
+                  <Text style={{ color: theme.muted }}>
+                    Margen adicional: {item.opening.applyAdditionalMargin ? "Sí" : "No"}
                   </Text>
                 </View>
-                <View style={[styles.planGrid, wide && styles.planGridWide]}>
-                  {glassPlan.options.map((option) => (
-                    <View
-                      key={option.sizeId}
-                      style={[
-                        styles.planCard,
-                        {
-                          backgroundColor: theme.background,
-                          borderColor:
-                            glassPlan.recommendedSizeId === option.sizeId
-                              ? theme.primary
-                              : theme.border,
-                        },
-                      ]}
-                    >
-                      <View style={styles.planHeader}>
-                        <Text style={[styles.planTitle, { color: theme.text }]}>Plancha {option.label}</Text>
-                        {glassPlan.recommendedSizeId === option.sizeId && <Badge label="Mejor opción" tone="blue" />}
-                      </View>
-                      <Text style={{ color: theme.muted }}>
-                        {option.sheets.length} plancha(s) · {option.wastePercent}% sobrante
+                <View style={{ flex: 1, gap: 7 }}>
+                  <Text style={[styles.subheading, { color: theme.text }]}>Accesorios</Text>
+                  {accessories.length ? (
+                    accessories.map((accessory) => (
+                      <Text key={accessory.code} style={{ color: theme.muted }}>
+                        {accessory.name}: {accessory.quantity} {accessory.unit}
                       </Text>
-                      {!!option.error && <Text style={{ color: theme.danger }}>{option.error}</Text>}
-                      {option.sheets.map((sheet) => (
-                        <View key={sheet.id} style={styles.sheet}>
-                          <Text style={{ color: theme.muted, fontSize: 12, fontWeight: "800" }}>
-                            Plancha #{sheet.id} · sobrante {sheet.wasteAreaM2} m²
-                          </Text>
-                          <GlassSheetSketch sheet={sheet} />
-                        </View>
-                      ))}
-                    </View>
-                  ))}
+                    ))
+                  ) : (
+                    <Text style={{ color: theme.muted }}>Sin accesorios configurados.</Text>
+                  )}
                 </View>
-              </Card>
-
-              <View
-                onLayout={
-                  itemIndex === 0
-                    ? ({ nativeEvent }) =>
-                        setOptimizerY(firstItemY.current + nativeEvent.layout.y)
-                    : undefined
-                }
-              >
-                <Card>
-                  <SectionHeader title="Optimizador de cortes" action={`${barsByItem[itemIndex].length} barras estimadas`} />
-                  <View style={styles.barGrid}>
-                    {barsByItem[itemIndex].map((bar, index) => (
-                      <View key={`${bar.materialCode}-${bar.id}-${index}`} style={[styles.barCard, { backgroundColor: theme.surfaceAlt }]}>
-                        <Text style={[styles.rowCode, { color: theme.primary }]}>{bar.materialCode}</Text>
-                        <Text style={[styles.rowTitle, { color: theme.text }]}>Barra #{bar.id}</Text>
-                        <Text style={{ color: theme.muted, lineHeight: 19 }}>
-                          {bar.cuts.map((cut) => `${cut.lengthMm} mm`).join(" + ")}
-                        </Text>
-                        <Text style={{ color: theme.warning, fontWeight: "800" }}>Sobrante: {bar.remainderMm} mm</Text>
-                      </View>
-                    ))}
-                  </View>
-                </Card>
               </View>
-            </View>
+            </Card>
           );
         })}
 
-        <View style={[styles.footerGrid, wide && styles.footerGridWide]}>
-          <Card style={{ flex: 1 }}>
-            <SectionHeader title="Resumen económico" />
-            <TotalRow label="Costo directo" value={quote.totals.directCost} currency={currency} />
-            <TotalRow
-              label="Precio por pies²"
-              value={quote.items.reduce((sum, item) => sum + (item.squareFoot?.total ?? 0), 0)}
-              currency={currency}
-            />
-            <TotalRow label="Margen" value={quote.totals.margin} currency={currency} />
-            <TotalRow label="Subtotal" value={quote.totals.subtotal} currency={currency} />
-            <TotalRow label={`ITBIS (${quote.settingsSnapshot.taxRate}%)`} value={quote.totals.tax} currency={currency} />
-            <View style={[styles.totalDivider, { backgroundColor: theme.border }]} />
-            <View style={styles.cleanRow}>
-              <Text style={[styles.grandTotal, { color: theme.text }]}>Total general</Text>
-              <Money value={quote.totals.total} currency={currency} />
+        <View
+          onLayout={({ nativeEvent }) => {
+            glassY.current = nativeEvent.layout.y;
+          }}
+        >
+          <Card style={{ borderColor: theme.primary }}>
+            <View style={styles.optimizerHeader}>
+              <View style={{ flex: 1 }}>
+                <Badge label="Optimizador de cristales" tone="blue" />
+                <Text style={[styles.optimizerTitle, { color: theme.text }]}>
+                  Comparación de planchas
+                </Text>
+                <Text style={{ color: theme.muted }}>
+                  Cortes, sobrante y desperdicio aproximados para todo el proyecto.
+                </Text>
+              </View>
+              <Text style={[styles.recommendation, { color: theme.primary }]}>
+                {glassPlan.recommendedSizeId
+                  ? `Recomendada: ${glassPlan.options.find(
+                      ({ sizeId }) => sizeId === glassPlan.recommendedSizeId,
+                    )?.label}`
+                  : "Ninguna plancha admite todos los cortes"}
+              </Text>
             </View>
-          </Card>
-          <Card style={{ flex: 1 }}>
-            <SectionHeader title="Observaciones" />
-            <Text style={{ color: theme.muted, lineHeight: 21 }}>
-              {quote.notes || "No se agregaron observaciones a este trabajo."}
-            </Text>
-            <View style={styles.actionRow}>
-              <View style={{ flex: 1 }}>
-                <Button title="Nuevo trabajo" onPress={() => router.push("/quotes/new")} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Button title="Volver al inicio" variant="secondary" onPress={() => router.replace("/")} />
-              </View>
+            <View style={[styles.planGrid, wide && styles.columnsWide]}>
+              {glassPlan.options.map((option) => (
+                <View
+                  key={option.sizeId}
+                  style={[
+                    styles.plan,
+                    {
+                      backgroundColor: theme.background,
+                      borderColor:
+                        option.sizeId === glassPlan.recommendedSizeId
+                          ? theme.primary
+                          : theme.border,
+                    },
+                  ]}
+                >
+                  <View style={styles.planHeading}>
+                    <Text style={[styles.subheading, { color: theme.text }]}>
+                      Plancha {option.label}
+                    </Text>
+                    {option.sizeId === glassPlan.recommendedSizeId && (
+                      <Badge label="Mejor opción" tone="blue" />
+                    )}
+                  </View>
+                  <Text style={{ color: theme.muted }}>
+                    {option.sheets.length} plancha(s) · desperdicio {option.totalWasteAreaM2} m² (
+                    {option.wastePercent}%)
+                  </Text>
+                  {!!option.error && <Text style={{ color: theme.danger }}>{option.error}</Text>}
+                  {option.sheets.map((sheet) => (
+                    <View key={sheet.id} style={{ gap: 5 }}>
+                      <Text style={[styles.code, { color: theme.muted }]}>
+                        PLANCHA #{sheet.id} · {sheet.cuts.length} cortes · sobrante{" "}
+                        {sheet.wasteAreaM2} m²
+                      </Text>
+                      <GlassSheetSketch sheet={sheet} />
+                    </View>
+                  ))}
+                </View>
+              ))}
             </View>
           </Card>
         </View>
+
+        <View
+          onLayout={({ nativeEvent }) => {
+            aluminumY.current = nativeEvent.layout.y;
+          }}
+        >
+          <Card>
+            <View style={styles.optimizerHeader}>
+              <View style={{ flex: 1 }}>
+                <Badge label="Optimizador de aluminio" tone="red" />
+                <Text style={[styles.optimizerTitle, { color: theme.text }]}>
+                  {aluminumPlan.length} barras necesarias
+                </Text>
+                <Text style={{ color: theme.muted }}>
+                  Desperdicio total: {formatFeetAndInches(totalAluminumWaste)}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.barGrid}>
+              {aluminumPlan.map((bar, index) => {
+                const stockLength = quote.settingsSnapshot.barLengthMm;
+                return (
+                  <View
+                    key={`${bar.materialCode}-${bar.id}-${index}`}
+                    style={[styles.barCard, { backgroundColor: theme.surfaceAlt }]}
+                  >
+                    <Text style={[styles.rowTitle, { color: theme.text }]}>
+                      {bar.materialName}
+                    </Text>
+                    <Text style={[styles.code, { color: theme.primary }]}>
+                      {bar.materialCode} · BARRA #{bar.id}
+                    </Text>
+                    <View style={[styles.barTrack, { backgroundColor: theme.border }]}>
+                      {bar.cuts.map((cut, cutIndex) => (
+                        <View
+                          key={`${cut.lengthMm}-${cutIndex}`}
+                          style={[
+                            styles.barCut,
+                            {
+                              flex: cut.lengthMm,
+                              backgroundColor:
+                                cutIndex % 2 === 0 ? theme.primary : theme.brandRed,
+                            },
+                          ]}
+                        />
+                      ))}
+                      {bar.remainderMm > 0 && (
+                        <View
+                          style={{
+                            flex: bar.remainderMm,
+                            backgroundColor: theme.background,
+                          }}
+                        />
+                      )}
+                    </View>
+                    <Text style={{ color: theme.muted }}>
+                      Cortes:{" "}
+                      {bar.cuts
+                        .map(
+                          (cut) =>
+                            `${round(cut.lengthMm / 25.4, 2)}″ (${cut.label})`,
+                        )
+                        .join(" + ")}
+                    </Text>
+                    <Text style={{ color: theme.warning, fontWeight: "800" }}>
+                      Sobrante: {formatFeetAndInches(bar.remainderMm)} · uso{" "}
+                      {round(((stockLength - bar.remainderMm) / stockLength) * 100)}%
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </Card>
+        </View>
+
+        <Card>
+          <SectionHeader title="Observaciones" />
+          <Text style={{ color: theme.muted, lineHeight: 21 }}>
+            {quote.notes || "No se agregaron observaciones a este proyecto."}
+          </Text>
+          <Button title="Volver al inicio" variant="secondary" onPress={() => router.replace("/")} />
+        </Card>
       </ScrollView>
     </>
   );
 }
 
-function TableHeader({ columns }: { columns: [string, string, string] }) {
+function TotalRow({
+  label,
+  value,
+  currency,
+  strong,
+}: {
+  label: string;
+  value: number;
+  currency: string;
+  strong?: boolean;
+}) {
   const theme = useTheme();
   return (
-    <View style={[styles.tableHeader, { backgroundColor: theme.surfaceAlt }]}>
-      {columns.map((column) => (
-        <Text key={column} style={[styles.tableHeaderText, { color: theme.muted }]}>{column}</Text>
-      ))}
-    </View>
-  );
-}
-
-function TableRow({ values }: { values: [string, string, string] }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.tableRow, { borderBottomColor: theme.border }]}>
-      {values.map((value, index) => (
-        <Text key={`${value}-${index}`} style={[styles.tableCell, { color: index === 0 ? theme.primary : theme.text }]}>
-          {value}
-        </Text>
-      ))}
-    </View>
-  );
-}
-
-function TotalRow({ label, value, currency }: { label: string; value: number; currency: string }) {
-  const theme = useTheme();
-  return (
-    <View style={styles.cleanRow}>
-      <Text style={{ flex: 1, color: theme.muted }}>{label}</Text>
+    <View style={styles.row}>
+      <Text style={[{ flex: 1, color: strong ? theme.text : theme.muted }, strong && styles.strong]}>
+        {label}
+      </Text>
       <Money value={value} currency={currency} />
     </View>
   );
@@ -434,53 +461,35 @@ const styles = StyleSheet.create({
   page: { width: "100%", maxWidth: 1440, alignSelf: "center", padding: 20, gap: 18, paddingBottom: 60 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 14 },
   hero: { borderRadius: 26, padding: 26, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 22 },
-  heroMain: { flex: 1, minWidth: 260, gap: 5 },
-  heroNumber: { color: "#C7D9F5", fontSize: 12, fontWeight: "900", letterSpacing: 1, marginTop: 7 },
+  heroMain: { flex: 1, minWidth: 250, gap: 7 },
   heroClient: { color: "#FFFFFF", fontSize: 29, fontWeight: "900" },
-  heroMeta: { color: "#DCE7F7", lineHeight: 20 },
-  heroTotal: { alignItems: "flex-end", gap: 6 },
-  heroTotalLabel: { color: "#C7D9F5", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  heroMeta: { color: "#DCE7F7" },
+  heroTotal: { alignItems: "flex-end", gap: 7 },
+  heroLabel: { color: "#C7D9F5", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   heroMoney: { backgroundColor: "#FFFFFF", paddingHorizontal: 15, paddingVertical: 12, borderRadius: 13 },
-  heroTotalMeta: { color: "#FFFFFF", fontSize: 12 },
-  notice: { flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 6 },
-  noticeBar: { width: 4, height: 34, borderRadius: 3 },
-  noticeText: { flex: 1, fontSize: 12, lineHeight: 17 },
-  primaryActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  primaryAction: { flexGrow: 1, flexBasis: 220 },
-  itemSection: { gap: 14 },
-  itemHeading: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 6 },
-  itemIndex: { width: 39, height: 39, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  itemIndexText: { color: "#FFFFFF", fontWeight: "900" },
-  itemTitle: { fontSize: 19, fontWeight: "900", marginBottom: 3 },
-  contentGrid: { gap: 14 },
-  contentGridWide: { flexDirection: "row", alignItems: "flex-start" },
-  gridColumn: { flex: 1, gap: 14, minWidth: 0 },
-  tableHeader: { flexDirection: "row", padding: 10, borderRadius: 9 },
-  tableHeaderText: { flex: 1, fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
-  tableRow: { flexDirection: "row", paddingVertical: 11, borderBottomWidth: 1 },
-  tableCell: { flex: 1, fontSize: 12, paddingRight: 7 },
-  tileGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
-  dataTile: { flexGrow: 1, flexBasis: 190, padding: 13, borderRadius: 13, gap: 4 },
-  dataTileLabel: { fontSize: 10, fontWeight: "900", letterSpacing: 0.7 },
-  dataTileValue: { fontSize: 15, fontWeight: "900" },
-  cleanRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 9, borderBottomWidth: 1 },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  action: { flexGrow: 1, flexBasis: 220 },
+  columns: { gap: 14 },
+  columnsWide: { flexDirection: "row", alignItems: "flex-start" },
+  divider: { height: 1 },
+  row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1 },
   rowTitle: { fontSize: 13, fontWeight: "800" },
-  rowCode: { fontSize: 10, fontWeight: "900", letterSpacing: 0.4 },
-  rowValue: { fontWeight: "900" },
-  optimizerHeading: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 12 },
-  optimizerTitle: { fontSize: 19, fontWeight: "900", marginTop: 8, marginBottom: 3 },
-  recommended: { fontWeight: "900", fontSize: 12 },
+  code: { fontSize: 10, fontWeight: "900", letterSpacing: 0.4, marginTop: 3 },
+  value: { fontSize: 12, fontWeight: "800", textAlign: "right" },
+  strong: { fontSize: 18, fontWeight: "900" },
+  itemHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  number: { width: 39, height: 39, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  numberText: { color: "#FFFFFF", fontWeight: "900" },
+  itemTitle: { fontSize: 18, fontWeight: "900", marginBottom: 3 },
+  subheading: { fontSize: 15, fontWeight: "900" },
+  optimizerHeader: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 12 },
+  optimizerTitle: { fontSize: 20, fontWeight: "900", marginTop: 8, marginBottom: 3 },
+  recommendation: { fontWeight: "900", fontSize: 12 },
   planGrid: { gap: 12 },
-  planGridWide: { flexDirection: "row" },
-  planCard: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, gap: 8, minWidth: 0 },
-  planHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  planTitle: { fontWeight: "900" },
-  sheet: { gap: 5 },
-  barGrid: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
-  barCard: { flexGrow: 1, flexBasis: 190, maxWidth: 320, borderRadius: 13, padding: 13, gap: 4 },
-  footerGrid: { gap: 14 },
-  footerGridWide: { flexDirection: "row", alignItems: "stretch" },
-  totalDivider: { height: 1 },
-  grandTotal: { flex: 1, fontSize: 19, fontWeight: "900" },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: "auto" },
+  plan: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, gap: 9, minWidth: 0 },
+  planHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  barGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  barCard: { flexGrow: 1, flexBasis: 260, maxWidth: 440, borderRadius: 14, padding: 14, gap: 7 },
+  barTrack: { height: 28, borderRadius: 8, overflow: "hidden", flexDirection: "row" },
+  barCut: { borderRightWidth: 2, borderRightColor: "#FFFFFF" },
 });

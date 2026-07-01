@@ -34,6 +34,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
   useWindowDimensions,
@@ -68,6 +69,7 @@ function initialOpening(
     heightMm: 0,
     quantity: 1,
     pricePerSquareFoot,
+    applyAdditionalMargin: false,
     accessories: { ...EMPTY_ACCESSORIES },
   };
 }
@@ -462,6 +464,26 @@ export default function NewQuoteScreen() {
                 )}
               </View>
 
+              <View style={[styles.marginOption, { backgroundColor: theme.surfaceAlt }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.cardTitle, { color: theme.text }]}>
+                    Aplicar margen adicional
+                  </Text>
+                  <Text style={[styles.cardHelp, { color: theme.muted }]}>
+                    {opening.applyAdditionalMargin
+                      ? `Suma ${settings.prices.profitMargin}% al precio base.`
+                      : "Desactivado: el precio por pie² ya incluye la ganancia."}
+                  </Text>
+                </View>
+                <Switch
+                  value={opening.applyAdditionalMargin ?? false}
+                  onValueChange={(applyAdditionalMargin) =>
+                    setOpening((current) => ({ ...current, applyAdditionalMargin }))
+                  }
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
               <View style={styles.actionRow}>
                 <View style={{ flex: 1 }}>
                   <Button
@@ -672,6 +694,7 @@ const styles = StyleSheet.create({
   chip: { minHeight: 40, justifyContent: "center", borderRadius: 11, borderWidth: 1, paddingHorizontal: 14 },
   fieldsRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   measureField: { flexGrow: 1, flexBasis: 140 },
+  marginOption: { flexDirection: "row", alignItems: "center", gap: 14, padding: 13, borderRadius: 13 },
   autoAccessoryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   autoAccessory: { flexGrow: 1, flexBasis: 120, borderRadius: 11, padding: 11, gap: 3 },
   autoAccessoryValue: { fontWeight: "900", fontSize: 15 },

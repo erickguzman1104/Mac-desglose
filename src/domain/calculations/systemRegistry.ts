@@ -135,6 +135,87 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
   };
 }
 
+type SlidingProfileRule = {
+  suffix: string;
+  name: string;
+  purpose: string;
+  axis: "width" | "height" | "leafWidth";
+  pieces: number;
+};
+
+const slidingRulesByLeaves: Record<2 | 3 | 4, SlidingProfileRule[]> = {
+  2: [
+    { suffix: "R2V", name: "Riel 2 vías", purpose: "Riel inferior", axis: "width", pieces: 1 },
+    { suffix: "C2V", name: "Cabezal 2 vías", purpose: "Cabezal de marco", axis: "width", pieces: 1 },
+    { suffix: "L2V", name: "Lateral 2 vías", purpose: "Laterales de marco", axis: "height", pieces: 2 },
+    { suffix: "LL", name: "Llavín", purpose: "Vertical de cierre", axis: "height", pieces: 2 },
+    { suffix: "ENG", name: "Enganche", purpose: "Vertical de encuentro", axis: "height", pieces: 2 },
+    { suffix: "CH", name: "Cabezal de hoja", purpose: "Horizontal superior de hoja", axis: "leafWidth", pieces: 2 },
+    { suffix: "ALF", name: "Alféizar", purpose: "Horizontal inferior de hoja", axis: "leafWidth", pieces: 2 },
+  ],
+  3: [
+    { suffix: "R3V", name: "Riel 3 vías", purpose: "Riel inferior", axis: "width", pieces: 1 },
+    { suffix: "C3V", name: "Cabezal 3 vías", purpose: "Cabezal de marco", axis: "width", pieces: 1 },
+    { suffix: "L3V", name: "Lateral 3 vías", purpose: "Laterales de marco", axis: "height", pieces: 2 },
+    { suffix: "LL", name: "Llavín", purpose: "Vertical de cierre", axis: "height", pieces: 2 },
+    { suffix: "ENG", name: "Enganche", purpose: "Vertical de encuentro", axis: "height", pieces: 4 },
+    { suffix: "CH", name: "Cabezal de hoja", purpose: "Horizontal superior de hoja", axis: "leafWidth", pieces: 3 },
+    { suffix: "ALF", name: "Alféizar", purpose: "Horizontal inferior de hoja", axis: "leafWidth", pieces: 3 },
+  ],
+  4: [
+    { suffix: "R2V", name: "Riel 2 vías", purpose: "Riel inferior", axis: "width", pieces: 1 },
+    { suffix: "C2V", name: "Cabezal 2 vías", purpose: "Cabezal de marco", axis: "width", pieces: 1 },
+    { suffix: "L2V", name: "Lateral 2 vías", purpose: "Laterales de marco", axis: "height", pieces: 2 },
+    { suffix: "LL", name: "Llavín", purpose: "Vertical de cierre", axis: "height", pieces: 4 },
+    { suffix: "ENG", name: "Enganche", purpose: "Vertical de encuentro", axis: "height", pieces: 4 },
+    { suffix: "CH", name: "Cabezal de hoja", purpose: "Horizontal superior de hoja", axis: "leafWidth", pieces: 4 },
+    { suffix: "ALF", name: "Alféizar", purpose: "Horizontal inferior de hoja", axis: "leafWidth", pieces: 4 },
+  ],
+};
+
+function slidingWindowBreakdown(input: OpeningInput): MaterialBreakdown {
+  const base = demoBreakdown(input);
+  const leaves = input.leaves ?? 2;
+  if (leaves !== 2 && leaves !== 3 && leaves !== 4) {
+    throw new Error("La cantidad de hojas debe ser 2, 3 o 4.");
+  }
+  const leafWidth = input.widthMm / leaves;
+  const cuts = slidingRulesByLeaves[leaves].map((rule) => {
+    const lengthMm =
+      rule.axis === "width"
+        ? input.widthMm
+        : rule.axis === "height"
+          ? input.heightMm
+          : leafWidth;
+    return {
+      id: `${input.systemId}-${rule.suffix}`,
+      materialCode: `${input.systemId}-${rule.suffix}`,
+      materialName: rule.name,
+      lengthMm: round(lengthMm, 1),
+      pieces: rule.pieces * input.quantity,
+      purpose: rule.purpose,
+    };
+  });
+  const profileMaterials: MaterialBreakdown["materials"] = cuts.map((cut) => ({
+    code: cut.materialCode,
+    name: cut.materialName,
+    unit: "m",
+    quantity: round((cut.lengthMm * cut.pieces) / 1000),
+    category: "profile",
+  }));
+
+  return {
+    ...base,
+    cuts,
+    materials: [
+      ...profileMaterials,
+      ...base.materials.filter((material) => material.category === "accessory"),
+    ],
+    warning:
+      "Estimado basado en cantidad de hojas y medidas terminadas. Valide descuentos técnicos antes de fabricar.",
+  };
+}
+
 export const SYSTEM_REGISTRY: Record<SystemId, WindowSystemDefinition> =
   Object.fromEntries(
     SYSTEM_IDS.map((id) => [
@@ -142,9 +223,15 @@ export const SYSTEM_REGISTRY: Record<SystemId, WindowSystemDefinition> =
       {
         id,
         name: id,
-        formulaVersion: "demo-1",
-        configured: false,
-        calculate: demoBreakdown,
+        formulaVersion:
+          id === "Tradicional" || id === "P-65" || id === "P-92"
+            ? "estimated-sliding-1"
+            : "demo-1",
+        configured: id === "Tradicional" || id === "P-65" || id === "P-92",
+        calculate:
+          id === "Tradicional" || id === "P-65" || id === "P-92"
+            ? slidingWindowBreakdown
+            : demoBreakdown,
       },
     ]),
   ) as Record<SystemId, WindowSystemDefinition>;

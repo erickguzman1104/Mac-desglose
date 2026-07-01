@@ -61,6 +61,7 @@ export function createQuoteItem(
     opening.quantity,
     prices,
     squareFoot?.total ?? 0,
+    opening.applyAdditionalMargin ?? false,
   );
   return {
     id: createId(),

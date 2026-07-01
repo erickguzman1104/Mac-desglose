@@ -39,7 +39,8 @@ export function GlassSheetSketch({ sheet }: { sheet: GlassSheetPlan }) {
               adjustsFontSizeToFit
               style={[styles.cutText, { color: theme.text }]}
             >
-              {cut.originalWidthMm}×{cut.originalHeightMm}
+              {(cut.originalWidthMm / 25.4).toFixed(1)}″×
+              {(cut.originalHeightMm / 25.4).toFixed(1)}″
               {cut.rotated ? " ↻" : ""}
             </Text>
           </View>

@@ -105,6 +105,7 @@ export interface OpeningInput {
   heightMm: number;
   quantity: number;
   pricePerSquareFoot: number;
+  applyAdditionalMargin?: boolean;
   accessories: AccessoryInput;
 }
 

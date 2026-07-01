@@ -13,6 +13,7 @@ export function calculatePrice(
   quantity: number,
   settings: PriceSettings,
   squareFootCharge = 0,
+  applyAdditionalMargin = false,
 ): PriceBreakdown {
   const profileMeters = breakdown.materials
     .filter((material) => material.category === "profile")
@@ -46,8 +47,13 @@ export function calculatePrice(
   const glass = glassArea * settings.glassPricePerSquareMeter;
   const labor = quantity * settings.laborPerUnit;
   const directCost = materials + glass + accessories + labor;
-  const margin = directCost * (settings.profitMargin / 100);
-  const subtotal = directCost + margin + squareFootCharge;
+  // El precio por pie² es el precio de venta base y normalmente ya incluye
+  // costos y ganancia. Para sistemas sin precio por pie² usamos el costo directo.
+  const saleBase = squareFootCharge > 0 ? squareFootCharge : directCost;
+  const margin = applyAdditionalMargin
+    ? saleBase * (settings.profitMargin / 100)
+    : 0;
+  const subtotal = saleBase + margin;
   const tax = subtotal * (settings.taxRate / 100);
 
   return {

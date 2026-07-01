@@ -9,6 +9,7 @@ import {
   toInches,
 } from "../src/domain/calculations/measurement";
 import { calculateAutomaticAccessories } from "../src/domain/calculations/accessories";
+import { calculateMaterials } from "../src/domain/calculations/systemRegistry";
 import { SYSTEM_IDS } from "../src/domain/models";
 import { mergeStoredSettings } from "../src/infrastructure/storage/settings";
 import {
@@ -64,8 +65,91 @@ test("crea un ítem con desglose y precio positivo", () => {
   assert.equal(item.opening.railPosition, "exterior");
   assert.ok((item.squareFoot?.total ?? 0) > 0);
   assert.ok(item.pricing.directCost > 0);
-  assert.ok(item.pricing.total > item.pricing.directCost);
-  assert.match(item.breakdown.warning ?? "", /demostrativo/i);
+  assert.equal(item.pricing.margin, 0);
+  assert.equal(
+    item.pricing.subtotal,
+    item.squareFoot?.total,
+    "el precio por pie² es el precio de venta base",
+  );
+  assert.match(item.breakdown.warning ?? "", /estimado/i);
+});
+
+test("aplica el margen configurado solo cuando se activa", () => {
+  const baseOpening = {
+    systemId: "P-65" as const,
+    leaves: 2 as const,
+    railPosition: "interior" as const,
+    width: 48,
+    height: 36,
+    unit: "in" as const,
+    widthInches: 48,
+    heightInches: 36,
+    widthMm: 1219.2,
+    heightMm: 914.4,
+    quantity: 1,
+    pricePerSquareFoot: 100,
+    accessories: {
+      rubberMeters: 0,
+      wheels: 0,
+      lockType: "mono" as const,
+      locks: 0,
+      guideKits: 0,
+      weatherstripMeters: 0,
+      screws: 0,
+    },
+  };
+  const withoutMargin = createQuoteItem(baseOpening, DEFAULT_SETTINGS.prices);
+  const withMargin = createQuoteItem(
+    { ...baseOpening, applyAdditionalMargin: true },
+    DEFAULT_SETTINGS.prices,
+  );
+
+  assert.equal(withoutMargin.pricing.margin, 0);
+  assert.equal(
+    withMargin.pricing.margin,
+    withMargin.squareFoot!.total * (DEFAULT_SETTINGS.prices.profitMargin / 100),
+  );
+  assert.equal(
+    withMargin.pricing.subtotal,
+    withMargin.squareFoot!.total + withMargin.pricing.margin,
+  );
+});
+
+test("estima perfiles de tres hojas y multiplica por cantidad", () => {
+  const breakdown = calculateMaterials({
+    systemId: "P-92",
+    leaves: 3,
+    railPosition: "interior",
+    width: 120,
+    height: 60,
+    unit: "in",
+    widthInches: 120,
+    heightInches: 60,
+    widthMm: 3048,
+    heightMm: 1524,
+    quantity: 2,
+    pricePerSquareFoot: 0,
+    accessories: {
+      rubberMeters: 0,
+      wheels: 0,
+      lockType: "mono",
+      locks: 0,
+      guideKits: 0,
+      weatherstripMeters: 0,
+      screws: 0,
+    },
+  });
+  const pieces = Object.fromEntries(
+    breakdown.cuts.map((cut) => [cut.materialCode.split("-").at(-1), cut.pieces]),
+  );
+
+  assert.equal(pieces.R3V, 2);
+  assert.equal(pieces.C3V, 2);
+  assert.equal(pieces.L3V, 4);
+  assert.equal(pieces.LL, 4);
+  assert.equal(pieces.ENG, 8);
+  assert.equal(pieces.CH, 6);
+  assert.equal(pieces.ALF, 6);
 });
 
 test("convierte las unidades admitidas a pulgadas", () => {

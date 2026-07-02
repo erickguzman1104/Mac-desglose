@@ -1,6 +1,6 @@
 import { type SQLiteDatabase } from "expo-sqlite";
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   const result = await db.getFirstAsync<{ user_version: number }>(
@@ -53,6 +53,23 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+    `);
+  }
+
+  if (version < 2) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS breakdowns (
+        id TEXT PRIMARY KEY NOT NULL,
+        number TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        search_text TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_breakdowns_search ON breakdowns(search_text);
+      CREATE INDEX IF NOT EXISTS idx_breakdowns_updated ON breakdowns(updated_at);
     `);
   }
 

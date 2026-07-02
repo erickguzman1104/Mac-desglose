@@ -5,6 +5,7 @@ import {
   SystemId,
   WindowSystemDefinition,
 } from "../models";
+import { usesSimpleMeasurementFlow } from "../systemCatalog";
 
 const round = (value: number, precision = 2) =>
   Math.round(value * 10 ** precision) / 10 ** precision;
@@ -20,7 +21,9 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
   const parts =
     input.systemId === "AA"
       ? input.bodyCount ?? input.leaves ?? 1
-      : input.leaves ?? 2;
+      : usesSimpleMeasurementFlow(input.systemId)
+        ? 1
+        : input.leaves ?? 2;
   const glassWidth = widthMm / parts;
   const glassArea = (glassWidth * heightMm * parts * quantity) / 1_000_000;
   const frameMeters = ((widthMm * 2 + heightMm * 2) * quantity) / 1000;
@@ -87,7 +90,7 @@ function demoBreakdown(input: OpeningInput): MaterialBreakdown {
         code: `CIERRE-${input.accessories.lockType}`,
         name:
           input.accessories.lockType === "puño"
-            ? "Puño"
+            ? "Puño de centro"
           : input.accessories.lockType === "mono"
               ? "Mono"
               : input.accessories.lockType === "monopunto"

@@ -1,6 +1,5 @@
 import {
   AccessoryInput,
-  LockType,
   SystemAccessoryRules,
 } from "../models";
 
@@ -16,7 +15,6 @@ export function calculateAutomaticAccessories(
   rules: SystemAccessoryRules,
   parts: number,
   windows: number,
-  lockType: LockType,
 ): AccessoryInput {
   return {
     rubberMeters: applyRule(rules.rubberMeters, parts, windows),
@@ -24,7 +22,7 @@ export function calculateAutomaticAccessories(
     guideKits: applyRule(rules.guideKits, parts, windows),
     weatherstripMeters: applyRule(rules.weatherstripMeters, parts, windows),
     screws: applyRule(rules.screws, parts, windows),
-    lockType,
-    locks: applyRule(rules.locksByType[lockType], parts, windows),
+    lockType: "puño",
+    locks: applyRule(rules.locksByType.puño, parts, windows),
   };
 }

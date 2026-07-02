@@ -1,5 +1,6 @@
 import { migrateDatabase } from "@/infrastructure/database";
 import { SQLiteQuoteRepository } from "@/infrastructure/quoteRepository";
+import { SQLiteBreakdownRepository } from "@/infrastructure/breakdownRepository";
 import {
   loadSettings,
   saveSettings,
@@ -17,6 +18,7 @@ function SQLiteStorageProvider({ children }: PropsWithChildren) {
   const storage = useMemo<AppStorage>(
     () => ({
       quotes: new SQLiteQuoteRepository(db),
+      breakdowns: new SQLiteBreakdownRepository(db),
       loadSettings: () => loadSettings(db),
       saveSettings: (settings) => saveSettings(db, settings),
     }),

@@ -4,16 +4,18 @@ import { calculateAutomaticAccessories } from "@/domain/calculations/accessories
 import { calculateSquareFootPrice } from "@/domain/calculations/measurement";
 import {
   Client,
+  Breakdown,
   OpeningInput,
   PriceSettings,
   Quote,
   QuoteItem,
+  QuoteCommercialTerms,
 } from "@/domain/models";
 import {
-  availableLockTypes,
   getSystemCatalogItem,
   supportsRails,
   supportsSquareFootPricing,
+  usesSimpleMeasurementFlow,
 } from "@/domain/systemCatalog";
 
 export const createId = () =>
@@ -23,24 +25,24 @@ export function createQuoteItem(
   opening: OpeningInput,
   prices: PriceSettings,
 ): QuoteItem {
+  const hasSimpleMeasurements = usesSimpleMeasurementFlow(opening.systemId);
   const partCount =
     opening.systemId === "AA"
       ? opening.bodyCount ?? opening.leaves ?? 1
-      : opening.leaves ?? 2;
-  const lockType = availableLockTypes(opening.systemId).includes(
-    opening.accessories.lockType,
-  )
-    ? opening.accessories.lockType
-    : "mono";
+      : hasSimpleMeasurements
+        ? 1
+        : opening.leaves ?? 2;
   const accessories = calculateAutomaticAccessories(
     prices.accessoryRules[opening.systemId],
     partCount,
     opening.quantity,
-    lockType,
   );
   const normalizedOpening: OpeningInput = {
     ...opening,
-    leaves: opening.systemId === "AA" ? undefined : opening.leaves ?? 2,
+    leaves:
+      opening.systemId === "AA" || hasSimpleMeasurements
+        ? undefined
+        : opening.leaves ?? 2,
     bodyCount: opening.systemId === "AA" ? partCount : undefined,
     railPosition: supportsRails(opening.systemId)
       ? opening.railPosition ?? "interior"
@@ -68,7 +70,9 @@ export function createQuoteItem(
     description:
       opening.systemId === "AA"
         ? `${getSystemCatalogItem(opening.systemId).label} · ${partCount} cuerpos`
-        : `${getSystemCatalogItem(opening.systemId).label} · ${partCount} hojas`,
+        : hasSimpleMeasurements
+          ? getSystemCatalogItem(opening.systemId).label
+          : `${getSystemCatalogItem(opening.systemId).label} · ${partCount} hojas`,
     opening: normalizedOpening,
     breakdown,
     pricing,
@@ -108,5 +112,126 @@ export function createQuote(draft: QuoteDraft, prices: PriceSettings): Quote {
     settingsSnapshot: { ...prices },
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function createQuoteFromBreakdown(
+  breakdown: Breakdown,
+  clientDraft: Omit<Client, "id" | "createdAt">,
+  projectName: string,
+  notes: string,
+  terms: QuoteCommercialTerms,
+  prices: PriceSettings,
+): Quote {
+  const items = breakdown.items.map((item) => {
+    const quoteItem = createQuoteItem(
+      {
+        ...item.opening,
+        pricePerSquareFoot: terms.pricePerSquareFoot,
+        applyAdditionalMargin: false,
+      },
+      { ...prices, taxRate: 0, laborPerUnit: 0 },
+    );
+    const squareFoot = calculateSquareFootPrice(
+      item.opening.widthInches,
+      item.opening.heightInches,
+      item.opening.quantity,
+      terms.pricePerSquareFoot,
+    );
+    return {
+      ...quoteItem,
+      squareFoot,
+      unitPrice: squareFoot.total / item.opening.quantity,
+      lineTotal: squareFoot.total,
+    };
+  });
+  const now = new Date().toISOString();
+  const sales = items.reduce(
+    (sum, item) => sum + (item.squareFoot?.total ?? 0),
+    0,
+  );
+  const marginBase = sales + terms.installation;
+  const margin = terms.applyAdditionalMargin
+    ? marginBase * (prices.profitMargin / 100)
+    : 0;
+  const beforeDiscount =
+    sales + terms.installation + terms.transport + margin;
+  const discount = beforeDiscount * (terms.discountPercent / 100);
+  const subtotal = beforeDiscount - discount;
+  const tax = terms.applyTax ? subtotal * (terms.taxRate / 100) : 0;
+  const money = (value: number) => Math.round(value * 100) / 100;
+
+  return {
+    id: createId(),
+    number: `COT-${Date.now().toString().slice(-6)}`,
+    client: {
+      id: createId(),
+      createdAt: now,
+      ...clientDraft,
+    },
+    projectName: projectName.trim() || breakdown.name,
+    date: now.slice(0, 10),
+    notes: notes.trim(),
+    status: "draft",
+    breakdownId: breakdown.id,
+    commercial: terms,
+    items,
+    totals: {
+      directCost: money(items.reduce((sum, item) => sum + item.pricing.directCost, 0)),
+      margin: money(margin),
+      subtotal: money(subtotal),
+      discount: money(discount),
+      tax: money(tax),
+      total: money(subtotal + tax),
+    },
+    settingsSnapshot: { ...prices },
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function recalculateQuoteCommercial(
+  quote: Quote,
+  terms: QuoteCommercialTerms,
+): Quote {
+  const items = quote.items.map((item) => {
+    const squareFoot = calculateSquareFootPrice(
+      item.opening.widthInches,
+      item.opening.heightInches,
+      item.opening.quantity,
+      terms.pricePerSquareFoot,
+    );
+    return {
+      ...item,
+      opening: { ...item.opening, pricePerSquareFoot: terms.pricePerSquareFoot },
+      squareFoot,
+      unitPrice: squareFoot.total / item.opening.quantity,
+      lineTotal: squareFoot.total,
+    };
+  });
+  const sales = items.reduce((sum, item) => sum + item.lineTotal, 0);
+  const margin = terms.applyAdditionalMargin
+    ? (sales + terms.installation) *
+      (quote.settingsSnapshot.profitMargin / 100)
+    : 0;
+  const beforeDiscount =
+    sales + terms.installation + terms.transport + margin;
+  const discount = beforeDiscount * (terms.discountPercent / 100);
+  const subtotal = beforeDiscount - discount;
+  const tax = terms.applyTax ? subtotal * (terms.taxRate / 100) : 0;
+  const money = (value: number) => Math.round(value * 100) / 100;
+
+  return {
+    ...quote,
+    items,
+    commercial: terms,
+    totals: {
+      ...quote.totals,
+      margin: money(margin),
+      subtotal: money(subtotal),
+      discount: money(discount),
+      tax: money(tax),
+      total: money(subtotal + tax),
+    },
   };
 }

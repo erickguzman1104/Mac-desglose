@@ -1,13 +1,11 @@
 import { GLASS_SHEET_SIZES } from "@/domain/calculations/glassOptimizer";
 import {
   AppSettings,
-  LockType,
   MeasurementUnit,
   SystemAccessoryRules,
 } from "@/domain/models";
 import {
   SYSTEM_CATALOG,
-  availableLockTypes,
   supportsSquareFootPricing,
 } from "@/domain/systemCatalog";
 import { useApp } from "@/presentation/AppContext";
@@ -120,9 +118,8 @@ export default function SettingsScreen() {
       },
     }));
 
-  const setLockRule = (
+  const setCenterHandleRule = (
     systemId: keyof AppSettings["prices"]["accessoryRules"],
-    lockType: LockType,
     factor: "perWindow" | "perLeaf",
     value: string,
   ) =>
@@ -136,8 +133,8 @@ export default function SettingsScreen() {
             ...current.prices.accessoryRules[systemId],
             locksByType: {
               ...current.prices.accessoryRules[systemId].locksByType,
-              [lockType]: {
-                ...current.prices.accessoryRules[systemId].locksByType[lockType],
+              puño: {
+                ...current.prices.accessoryRules[systemId].locksByType.puño,
                 [factor]: Number(value.replace(",", ".")) || 0,
               },
             },
@@ -317,9 +314,7 @@ export default function SettingsScreen() {
             <View style={styles.fieldsRow}>
               <AccessoryPriceField label="Goma / m" field="rubberPerMeter" draft={draft} onChange={setAccessoryPrice} />
               <AccessoryPriceField label="Rueda" field="wheel" draft={draft} onChange={setAccessoryPrice} />
-              <AccessoryPriceField label="Puño centro" field="centerHandle" draft={draft} onChange={setAccessoryPrice} />
-              <AccessoryPriceField label="Monopunto" field="singlePointLock" draft={draft} onChange={setAccessoryPrice} />
-              <AccessoryPriceField label="Cerradura tradicional" field="traditionalLock" draft={draft} onChange={setAccessoryPrice} />
+              <AccessoryPriceField label="Puño de centro" field="centerHandle" draft={draft} onChange={setAccessoryPrice} />
               <AccessoryPriceField label="Kit de guías" field="guideKit" draft={draft} onChange={setAccessoryPrice} />
               <AccessoryPriceField label="Felpa / m" field="weatherstripPerMeter" draft={draft} onChange={setAccessoryPrice} />
               <AccessoryPriceField label="Tornillo instalación" field="installationScrew" draft={draft} onChange={setAccessoryPrice} />
@@ -393,17 +388,14 @@ export default function SettingsScreen() {
                           onLeaf={(value) => setAccessoryRule(system.id, key, "perLeaf", value)}
                         />
                       ))}
-                      {availableLockTypes(system.id).map((lockType) => (
-                        <RuleFields
-                          key={lockType}
-                          label={`Cerradura ${lockType}`}
-                          perWindow={rules.locksByType[lockType].perWindow}
-                          perLeaf={rules.locksByType[lockType].perLeaf}
-                          partLabel={system.id === "AA" ? "Por cuerpo" : "Por hoja"}
-                          onWindow={(value) => setLockRule(system.id, lockType, "perWindow", value)}
-                          onLeaf={(value) => setLockRule(system.id, lockType, "perLeaf", value)}
-                        />
-                      ))}
+                      <RuleFields
+                        label="Puño de centro"
+                        perWindow={rules.locksByType.puño.perWindow}
+                        perLeaf={rules.locksByType.puño.perLeaf}
+                        partLabel={system.id === "AA" ? "Por cuerpo" : "Por hoja"}
+                        onWindow={(value) => setCenterHandleRule(system.id, "perWindow", value)}
+                        onLeaf={(value) => setCenterHandleRule(system.id, "perLeaf", value)}
+                      />
                     </View>
                   </View>
                 );

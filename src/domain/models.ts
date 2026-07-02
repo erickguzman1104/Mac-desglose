@@ -186,8 +186,36 @@ export interface QuoteTotals {
   directCost: number;
   margin: number;
   subtotal: number;
+  discount?: number;
   tax: number;
   total: number;
+}
+
+export interface BreakdownItem {
+  id: string;
+  description: string;
+  opening: OpeningInput;
+  breakdown: MaterialBreakdown;
+}
+
+export interface Breakdown {
+  id: string;
+  number: string;
+  name: string;
+  notes: string;
+  items: BreakdownItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuoteCommercialTerms {
+  pricePerSquareFoot: number;
+  transport: number;
+  installation: number;
+  taxRate: number;
+  applyTax: boolean;
+  applyAdditionalMargin: boolean;
+  discountPercent: number;
 }
 
 export interface Quote {
@@ -198,6 +226,8 @@ export interface Quote {
   date: string;
   notes: string;
   status: QuoteStatus;
+  breakdownId?: string;
+  commercial?: QuoteCommercialTerms;
   items: QuoteItem[];
   totals: QuoteTotals;
   settingsSnapshot: PriceSettings;
@@ -238,6 +268,8 @@ export interface GlassOptimization {
   sizeId: GlassSheetSizeId;
   label: string;
   sheets: GlassSheetPlan[];
+  requiredPieces: number;
+  placedPieces: number;
   totalWasteAreaM2: number;
   wastePercent: number;
   error?: string;

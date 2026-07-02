@@ -1,495 +1,309 @@
-import { optimizeCuts } from "@/domain/calculations/cutOptimizer";
-import { compareGlassSheetSizes } from "@/domain/calculations/glassOptimizer";
-import { MaterialCut, Quote } from "@/domain/models";
+import { recalculateQuoteCommercial } from "@/application/quoteFactory";
+import { formatMeasurement } from "@/domain/calculations/inchFractions";
+import { Quote, QuoteStatus } from "@/domain/models";
 import { useApp } from "@/presentation/AppContext";
-import { Badge, Button, Card, Money, SectionHeader } from "@/presentation/components";
-import { GlassSheetSketch } from "@/presentation/GlassSheetSketch";
+import { Badge, Button, Card, Field, Money, SectionHeader } from "@/presentation/components";
 import { useTheme } from "@/presentation/theme";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from "react-native";
 
-const round = (value: number, precision = 1) =>
-  Math.round(value * 10 ** precision) / 10 ** precision;
-
-function formatFeetAndInches(mm: number) {
-  const totalInches = mm / 25.4;
-  const feet = Math.floor(totalInches / 12);
-  const inches = round(totalInches - feet * 12, 2);
-  return `${feet}′ ${inches}″ (${round(totalInches, 2)} pulg)`;
+function normalizedTerms(quote: Quote) {
+  if (quote.commercial) {
+    return {
+      ...quote.commercial,
+      applyTax: quote.commercial.applyTax ?? quote.totals.tax > 0,
+    };
+  }
+  return {
+      pricePerSquareFoot: quote.items[0]?.squareFoot?.pricePerSquareFoot ?? 0,
+      transport: quote.settingsSnapshot.transport ?? 0,
+      installation: 0,
+      taxRate: quote.settingsSnapshot.taxRate,
+      applyTax: quote.totals.tax > 0,
+      applyAdditionalMargin: quote.totals.margin > 0,
+      discountPercent: 0,
+    };
 }
 
-export default function QuoteSummaryScreen() {
+export default function QuoteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { findQuote, saveQuote, settings } = useApp();
   const theme = useTheme();
   const { width } = useWindowDimensions();
-  const { settings, findQuote, saveQuote } = useApp();
   const [quote, setQuote] = useState<Quote | null>();
-  const [converting, setConverting] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
-  const aluminumY = useRef(0);
-  const glassY = useRef(0);
-  const wide = width >= 900;
+  const [draft, setDraft] = useState<Quote | null>();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const wide = width >= 850;
 
   useEffect(() => {
-    findQuote(id).then(setQuote);
+    findQuote(id).then((found) => {
+      setQuote(found);
+      setDraft(found ? { ...found, commercial: normalizedTerms(found) } : found);
+    });
   }, [findQuote, id]);
 
-  const projectCuts = useMemo(
-    () => quote?.items.flatMap((item) => item.breakdown.cuts) ?? [],
-    [quote],
-  );
+  if (quote === undefined) return <ActivityIndicator style={{ flex: 1 }} color={theme.primary} />;
+  if (quote === null) return <Text style={{ color: theme.text, padding: 20 }}>Cotización no encontrada.</Text>;
+  const shown = draft ?? quote;
 
-  const materialGroups = useMemo(() => {
-    const groups = new Map<
-      string,
-      { code: string; name: string; cuts: MaterialCut[]; totalMm: number; pieces: number }
-    >();
-    for (const cut of projectCuts) {
-      const group = groups.get(cut.materialCode) ?? {
-        code: cut.materialCode,
-        name: cut.materialName,
-        cuts: [],
-        totalMm: 0,
-        pieces: 0,
-      };
-      group.cuts.push(cut);
-      group.totalMm += cut.lengthMm * cut.pieces;
-      group.pieces += cut.pieces;
-      groups.set(cut.materialCode, group);
-    }
-    return [...groups.values()];
-  }, [projectCuts]);
+  const currency = shown.settingsSnapshot.currency || settings.prices.currency;
+  const terms = normalizedTerms(shown);
+  const squareFootTotal = shown.items.reduce((sum, item) => sum + (item.squareFoot?.total ?? 0), 0);
+  const transport = terms.transport;
+  const installation = terms?.installation ?? 0;
+  const discount = shown.totals.discount ?? 0;
 
-  const aluminumPlan = useMemo(
-    () =>
-      materialGroups.flatMap((material) =>
-        optimizeCuts(material.cuts, quote?.settingsSnapshot.barLengthMm ?? 6000).map(
-          (bar) => ({ ...bar, materialCode: material.code, materialName: material.name }),
-        ),
-      ),
-    [materialGroups, quote],
-  );
-
-  const glassPlan = useMemo(
-    () =>
-      compareGlassSheetSizes(
-        quote?.items.flatMap((item) => item.breakdown.glass) ?? [],
-      ),
-    [quote],
-  );
-
-  if (quote === undefined) {
-    return <ActivityIndicator style={{ flex: 1 }} color={theme.primary} />;
-  }
-  if (quote === null) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.background }]}>
-        <Text style={{ color: theme.text }}>No se encontró el trabajo.</Text>
-        <Button title="Volver" onPress={() => router.replace("/")} />
-      </View>
+  const setTerm = (key: keyof typeof terms, value: string | boolean) =>
+    setDraft((current) =>
+      current
+        ? {
+            ...current,
+            commercial: {
+              ...normalizedTerms(current),
+              [key]:
+                typeof value === "boolean"
+                  ? value
+                  : Number(value.replace(",", ".")) || 0,
+            },
+          }
+        : current,
     );
-  }
 
-  const currency = quote.settingsSnapshot.currency || settings.prices.currency;
-  const squareFootTotal = quote.items.reduce(
-    (sum, item) => sum + (item.squareFoot?.total ?? 0),
-    0,
-  );
-  const hasMargin = quote.totals.margin > 0;
-  const subtotalBeforeMargin = quote.totals.subtotal - quote.totals.margin;
-  const totalAluminumWaste = aluminumPlan.reduce(
-    (sum, bar) => sum + bar.remainderMm,
-    0,
-  );
-
-  const convertToQuote = async () => {
-    if (quote.status === "approved") return;
-    setConverting(true);
+  const saveChanges = async () => {
+    if (!draft) return;
+    setSaving(true);
     try {
-      const converted: Quote = {
-        ...quote,
-        status: "approved",
-        updatedAt: new Date().toISOString(),
-      };
-      await saveQuote(converted);
-      setQuote(converted);
-      Alert.alert("Cotización creada", "El desglose quedó guardado como cotización.");
-    } catch {
-      Alert.alert("No se pudo convertir", "Inténtalo de nuevo.");
+      const updated = { ...draft, updatedAt: new Date().toISOString() };
+      await saveQuote(updated);
+      setQuote(updated);
+      setDraft(updated);
+      setEditing(false);
     } finally {
-      setConverting(false);
+      setSaving(false);
+    }
+  };
+
+  const recalculate = () =>
+    setDraft((current) =>
+      current
+        ? recalculateQuoteCommercial(current, normalizedTerms(current))
+        : current,
+    );
+
+  const changeStatus = async (status: QuoteStatus) => {
+    setSaving(true);
+    try {
+      const updated = { ...shown, status, updatedAt: new Date().toISOString() };
+      await saveQuote(updated);
+      setQuote(updated);
+    } catch {
+      Alert.alert("No se pudo actualizar", "Inténtalo de nuevo.");
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
     <>
-      <Stack.Screen options={{ title: quote.number }} />
-      <ScrollView
-        ref={scrollRef}
-        style={{ backgroundColor: theme.background }}
-        contentContainerStyle={styles.page}
-      >
-        <SectionHeader title="Resumen del proyecto" action={quote.number} />
+      <Stack.Screen options={{ title: shown.number }} />
+      <ScrollView style={{ backgroundColor: theme.background }} contentContainerStyle={styles.page}>
         <View style={[styles.hero, { backgroundColor: theme.brandBlue }]}>
-          <View style={styles.heroMain}>
-            <Badge
-              label={quote.status === "draft" ? "Desglose" : "Cotización"}
-              tone="red"
-            />
-            <Text style={styles.heroClient}>{quote.client.name}</Text>
-            <Text style={styles.heroMeta}>
-              {quote.projectName} · {quote.date} · {quote.items.length} medida(s)
-            </Text>
+          <View style={{ flex: 1 }}>
+            <Badge label={`Cotización · ${shown.status}`} tone="red" />
+            <Text style={styles.heroTitle}>{shown.client.name}</Text>
+            <Text style={styles.heroMeta}>{shown.projectName} · {shown.number} · {shown.date}</Text>
           </View>
-          <View style={styles.heroTotal}>
-            <Text style={styles.heroLabel}>TOTAL</Text>
-            <View style={styles.heroMoney}>
-              <Money value={quote.totals.total} currency={currency} />
-            </View>
+          <View style={styles.totalBox}>
+            <Text style={styles.totalLabel}>TOTAL FINAL</Text>
+            <Money value={shown.totals.total} currency={currency} />
           </View>
         </View>
 
         <View style={styles.actions}>
-          <View style={styles.action}>
+          {!editing ? (
+            <Button title="Editar cotización" onPress={() => setEditing(true)} />
+          ) : (
+            <>
+              <Button title={saving ? "Guardando…" : "Guardar cambios"} disabled={saving} onPress={() => void saveChanges()} />
+              <Button title="Recalcular" variant="secondary" onPress={recalculate} />
+              <Button
+                title="Cancelar edición"
+                variant="danger"
+                onPress={() => {
+                  setDraft({ ...quote, commercial: normalizedTerms(quote) });
+                  setEditing(false);
+                }}
+              />
+            </>
+          )}
+          {shown.breakdownId && (
             <Button
-              title="Ver optimizador de aluminio"
+              title="Ver desglose asociado"
               variant="secondary"
-              onPress={() => scrollRef.current?.scrollTo({ y: aluminumY.current, animated: true })}
-            />
-          </View>
-          <View style={styles.action}>
-            <Button
-              title="Ver optimizador de cristales"
-              variant="secondary"
-              onPress={() => scrollRef.current?.scrollTo({ y: glassY.current, animated: true })}
-            />
-          </View>
-          <View style={styles.action}>
-            <Button
-              title={
-                quote.status === "approved"
-                  ? "Cotización creada"
-                  : converting
-                    ? "Convirtiendo…"
-                    : "Convertir en cotización"
+              onPress={() =>
+                router.push({ pathname: "/breakdowns/[id]", params: { id: shown.breakdownId! } })
               }
-              disabled={quote.status === "approved" || converting}
-              onPress={() => void convertToQuote()}
             />
-          </View>
+          )}
+          <Button title="Borrador" variant="secondary" disabled={saving || shown.status === "draft"} onPress={() => void changeStatus("draft")} />
+          <Button title="Aprobar" disabled={saving || shown.status === "approved"} onPress={() => void changeStatus("approved")} />
+          <Button title="Cancelar" variant="danger" disabled={saving || shown.status === "cancelled"} onPress={() => void changeStatus("cancelled")} />
         </View>
+
+        {editing && (
+          <Card>
+            <SectionHeader title="Editar valores comerciales" />
+            <View style={styles.fieldGrid}>
+              <Field label="Precio por pie²" value={String(terms.pricePerSquareFoot)} keyboardType="decimal-pad" onChangeText={(value) => setTerm("pricePerSquareFoot", value)} />
+              <Field label="Instalación" value={String(terms.installation)} keyboardType="decimal-pad" onChangeText={(value) => setTerm("installation", value)} />
+              <Field label="Transporte" value={String(terms.transport)} keyboardType="decimal-pad" onChangeText={(value) => setTerm("transport", value)} />
+              <Field label="ITBIS %" value={String(terms.taxRate)} keyboardType="decimal-pad" onChangeText={(value) => setTerm("taxRate", value)} editable={terms.applyTax} />
+              <Field label="Descuento %" value={String(terms.discountPercent)} keyboardType="decimal-pad" onChangeText={(value) => setTerm("discountPercent", value)} />
+              <Field
+                label="Total manual"
+                value={String(shown.totals.total)}
+                keyboardType="decimal-pad"
+                onChangeText={(value) =>
+                  setDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          totals: {
+                            ...current.totals,
+                            total: Number(value.replace(",", ".")) || 0,
+                          },
+                        }
+                      : current,
+                  )
+                }
+              />
+            </View>
+            <View style={[styles.switchRow, { backgroundColor: theme.surfaceAlt }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.text, fontWeight: "800" }}>Aplicar ITBIS</Text>
+                <Text style={{ color: theme.muted }}>
+                  {terms.applyTax ? `Se sumará ${terms.taxRate}% al subtotal` : "No aplicado · total sin ITBIS"}
+                </Text>
+              </View>
+              <Switch
+                value={terms.applyTax}
+                onValueChange={(applyTax) =>
+                  setDraft((current) =>
+                    current
+                      ? recalculateQuoteCommercial(current, {
+                          ...normalizedTerms(current),
+                          applyTax,
+                        })
+                      : current,
+                  )
+                }
+                trackColor={{ false: theme.border, true: theme.primary }}
+              />
+            </View>
+            <View style={[styles.switchRow, { backgroundColor: theme.surfaceAlt }]}>
+              <Text style={{ color: theme.text, flex: 1, fontWeight: "800" }}>Aplicar margen adicional</Text>
+              <Switch value={terms.applyAdditionalMargin} onValueChange={(value) => setTerm("applyAdditionalMargin", value)} trackColor={{ false: theme.border, true: theme.primary }} />
+            </View>
+          </Card>
+        )}
 
         <View style={[styles.columns, wide && styles.columnsWide]}>
           <Card style={{ flex: 1 }}>
-            <SectionHeader title="Resumen económico" />
-            <TotalRow label="Precio por pie²" value={squareFootTotal} currency={currency} />
-            <TotalRow label="Subtotal" value={subtotalBeforeMargin} currency={currency} />
-            {hasMargin && (
-              <TotalRow
-                label={`Margen adicional (${quote.settingsSnapshot.profitMargin}%)`}
-                value={quote.totals.margin}
-                currency={currency}
-              />
-            )}
-            <TotalRow
-              label={`ITBIS (${quote.settingsSnapshot.taxRate}%)`}
-              value={quote.totals.tax}
+            <SectionHeader title="Cliente y proyecto" />
+            <Info label="Cliente" value={shown.client.name} />
+            <Info label="Teléfono" value={shown.client.phone || "—"} />
+            <Info label="Dirección" value={shown.client.address || "—"} />
+            <Info label="Proyecto" value={shown.projectName} />
+            <Info label="Estado" value={shown.status} />
+          </Card>
+          <Card style={{ flex: 1 }}>
+            <SectionHeader title="Resumen comercial" />
+            <Total label={`Precio por pie² (${terms.pricePerSquareFoot})`} value={squareFootTotal} currency={currency} />
+            <Total label="Instalación" value={installation} currency={currency} />
+            <Total label="Transporte" value={transport} currency={currency} />
+            {shown.totals.margin > 0 && <Total label={`Margen adicional (${shown.settingsSnapshot.profitMargin}%)`} value={shown.totals.margin} currency={currency} />}
+            {discount > 0 && <Total label={`Descuento (${terms?.discountPercent ?? 0}%)`} value={-discount} currency={currency} />}
+            <Total label="Subtotal" value={shown.totals.subtotal} currency={currency} />
+            <Total
+              label={terms.applyTax ? `ITBIS aplicado (${terms.taxRate}%)` : "ITBIS no aplicado"}
+              value={shown.totals.tax}
               currency={currency}
             />
             <View style={[styles.divider, { backgroundColor: theme.border }]} />
-            <TotalRow label="Total" value={quote.totals.total} currency={currency} strong />
-          </Card>
-          <Card style={{ flex: 1 }}>
-            <SectionHeader
-              title="Materiales estimados"
-              action={`${materialGroups.length} referencias`}
-            />
-            {materialGroups.map((material) => (
-              <View
-                key={material.code}
-                style={[styles.row, { borderBottomColor: theme.border }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.rowTitle, { color: theme.text }]}>{material.name}</Text>
-                  <Text style={[styles.code, { color: theme.primary }]}>
-                    {material.code} · {material.pieces} cortes
-                  </Text>
-                </View>
-                <Text style={[styles.value, { color: theme.text }]}>
-                  {formatFeetAndInches(material.totalMm)}
-                </Text>
-              </View>
-            ))}
-          </Card>
-        </View>
-
-        <SectionHeader title="Medidas agregadas" action={`${quote.items.length} total`} />
-        {quote.items.map((item, index) => {
-          const accessories = item.breakdown.materials.filter(
-            ({ category }) => category === "accessory",
-          );
-          return (
-            <Card key={item.id}>
-              <View style={styles.itemHeader}>
-                <View style={[styles.number, { backgroundColor: theme.brandRed }]}>
-                  <Text style={styles.numberText}>{index + 1}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.itemTitle, { color: theme.text }]}>{item.description}</Text>
-                  <Text style={{ color: theme.muted }}>
-                    {item.opening.width} × {item.opening.height} {item.opening.unit} ·{" "}
-                    {item.opening.quantity} ud.
-                  </Text>
-                </View>
-                <Money value={item.lineTotal} currency={currency} />
-              </View>
-              <View style={[styles.columns, wide && styles.columnsWide]}>
-                <View style={{ flex: 1, gap: 7 }}>
-                  <Text style={[styles.subheading, { color: theme.text }]}>Precio</Text>
-                  {item.squareFoot && (
-                    <Text style={{ color: theme.muted }}>
-                      {item.squareFoot.totalArea} pie² × {item.squareFoot.pricePerSquareFoot}{" "}
-                      {currency} = {item.squareFoot.total} {currency}
-                    </Text>
-                  )}
-                  <Text style={{ color: theme.muted }}>
-                    Margen adicional: {item.opening.applyAdditionalMargin ? "Sí" : "No"}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, gap: 7 }}>
-                  <Text style={[styles.subheading, { color: theme.text }]}>Accesorios</Text>
-                  {accessories.length ? (
-                    accessories.map((accessory) => (
-                      <Text key={accessory.code} style={{ color: theme.muted }}>
-                        {accessory.name}: {accessory.quantity} {accessory.unit}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text style={{ color: theme.muted }}>Sin accesorios configurados.</Text>
-                  )}
-                </View>
-              </View>
-            </Card>
-          );
-        })}
-
-        <View
-          onLayout={({ nativeEvent }) => {
-            glassY.current = nativeEvent.layout.y;
-          }}
-        >
-          <Card style={{ borderColor: theme.primary }}>
-            <View style={styles.optimizerHeader}>
-              <View style={{ flex: 1 }}>
-                <Badge label="Optimizador de cristales" tone="blue" />
-                <Text style={[styles.optimizerTitle, { color: theme.text }]}>
-                  Comparación de planchas
-                </Text>
-                <Text style={{ color: theme.muted }}>
-                  Cortes, sobrante y desperdicio aproximados para todo el proyecto.
-                </Text>
-              </View>
-              <Text style={[styles.recommendation, { color: theme.primary }]}>
-                {glassPlan.recommendedSizeId
-                  ? `Recomendada: ${glassPlan.options.find(
-                      ({ sizeId }) => sizeId === glassPlan.recommendedSizeId,
-                    )?.label}`
-                  : "Ninguna plancha admite todos los cortes"}
-              </Text>
-            </View>
-            <View style={[styles.planGrid, wide && styles.columnsWide]}>
-              {glassPlan.options.map((option) => (
-                <View
-                  key={option.sizeId}
-                  style={[
-                    styles.plan,
-                    {
-                      backgroundColor: theme.background,
-                      borderColor:
-                        option.sizeId === glassPlan.recommendedSizeId
-                          ? theme.primary
-                          : theme.border,
-                    },
-                  ]}
-                >
-                  <View style={styles.planHeading}>
-                    <Text style={[styles.subheading, { color: theme.text }]}>
-                      Plancha {option.label}
-                    </Text>
-                    {option.sizeId === glassPlan.recommendedSizeId && (
-                      <Badge label="Mejor opción" tone="blue" />
-                    )}
-                  </View>
-                  <Text style={{ color: theme.muted }}>
-                    {option.sheets.length} plancha(s) · desperdicio {option.totalWasteAreaM2} m² (
-                    {option.wastePercent}%)
-                  </Text>
-                  {!!option.error && <Text style={{ color: theme.danger }}>{option.error}</Text>}
-                  {option.sheets.map((sheet) => (
-                    <View key={sheet.id} style={{ gap: 5 }}>
-                      <Text style={[styles.code, { color: theme.muted }]}>
-                        PLANCHA #{sheet.id} · {sheet.cuts.length} cortes · sobrante{" "}
-                        {sheet.wasteAreaM2} m²
-                      </Text>
-                      <GlassSheetSketch sheet={sheet} />
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </View>
-          </Card>
-        </View>
-
-        <View
-          onLayout={({ nativeEvent }) => {
-            aluminumY.current = nativeEvent.layout.y;
-          }}
-        >
-          <Card>
-            <View style={styles.optimizerHeader}>
-              <View style={{ flex: 1 }}>
-                <Badge label="Optimizador de aluminio" tone="red" />
-                <Text style={[styles.optimizerTitle, { color: theme.text }]}>
-                  {aluminumPlan.length} barras necesarias
-                </Text>
-                <Text style={{ color: theme.muted }}>
-                  Desperdicio total: {formatFeetAndInches(totalAluminumWaste)}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.barGrid}>
-              {aluminumPlan.map((bar, index) => {
-                const stockLength = quote.settingsSnapshot.barLengthMm;
-                return (
-                  <View
-                    key={`${bar.materialCode}-${bar.id}-${index}`}
-                    style={[styles.barCard, { backgroundColor: theme.surfaceAlt }]}
-                  >
-                    <Text style={[styles.rowTitle, { color: theme.text }]}>
-                      {bar.materialName}
-                    </Text>
-                    <Text style={[styles.code, { color: theme.primary }]}>
-                      {bar.materialCode} · BARRA #{bar.id}
-                    </Text>
-                    <View style={[styles.barTrack, { backgroundColor: theme.border }]}>
-                      {bar.cuts.map((cut, cutIndex) => (
-                        <View
-                          key={`${cut.lengthMm}-${cutIndex}`}
-                          style={[
-                            styles.barCut,
-                            {
-                              flex: cut.lengthMm,
-                              backgroundColor:
-                                cutIndex % 2 === 0 ? theme.primary : theme.brandRed,
-                            },
-                          ]}
-                        />
-                      ))}
-                      {bar.remainderMm > 0 && (
-                        <View
-                          style={{
-                            flex: bar.remainderMm,
-                            backgroundColor: theme.background,
-                          }}
-                        />
-                      )}
-                    </View>
-                    <Text style={{ color: theme.muted }}>
-                      Cortes:{" "}
-                      {bar.cuts
-                        .map(
-                          (cut) =>
-                            `${round(cut.lengthMm / 25.4, 2)}″ (${cut.label})`,
-                        )
-                        .join(" + ")}
-                    </Text>
-                    <Text style={{ color: theme.warning, fontWeight: "800" }}>
-                      Sobrante: {formatFeetAndInches(bar.remainderMm)} · uso{" "}
-                      {round(((stockLength - bar.remainderMm) / stockLength) * 100)}%
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
+            <Total label="Total final" value={shown.totals.total} currency={currency} strong />
           </Card>
         </View>
 
         <Card>
-          <SectionHeader title="Observaciones" />
-          <Text style={{ color: theme.muted, lineHeight: 21 }}>
-            {quote.notes || "No se agregaron observaciones a este proyecto."}
-          </Text>
-          <Button title="Volver al inicio" variant="secondary" onPress={() => router.replace("/")} />
+          <SectionHeader title="Partidas cotizadas" action={`${shown.items.length} medida(s)`} />
+          {shown.items.map((item, index) => (
+            <View key={item.id} style={[styles.itemRow, { borderBottomColor: theme.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.itemTitle, { color: theme.text }]}>{index + 1}. {item.description}</Text>
+                <Text style={{ color: theme.muted }}>
+                  {formatMeasurement(item.opening.width, item.opening.unit)} ×{" "}
+                  {formatMeasurement(item.opening.height, item.opening.unit)} · {item.opening.quantity} ud. · {item.squareFoot?.totalArea ?? 0} pie²
+                </Text>
+              </View>
+              <Money value={item.lineTotal} currency={currency} />
+            </View>
+          ))}
+        </Card>
+
+        <Card>
+          <SectionHeader title="Documentos" action="Próximamente" />
+          <Text style={{ color: theme.muted }}>La estructura comercial queda preparada para exportación futura.</Text>
+          <View style={styles.actions}>
+            <Button title="Generar PDF (futuro)" variant="secondary" disabled onPress={() => undefined} />
+            <Button title="Exportar Excel (futuro)" variant="secondary" disabled onPress={() => undefined} />
+          </View>
+        </Card>
+
+        <Card>
+          <SectionHeader title="Notas comerciales" />
+          <Text style={{ color: theme.muted }}>{shown.notes || "Sin notas comerciales."}</Text>
         </Card>
       </ScrollView>
     </>
   );
 }
 
-function TotalRow({
-  label,
-  value,
-  currency,
-  strong,
-}: {
-  label: string;
-  value: number;
-  currency: string;
-  strong?: boolean;
-}) {
+function Info({ label, value }: { label: string; value: string }) {
   const theme = useTheme();
   return (
-    <View style={styles.row}>
-      <Text style={[{ flex: 1, color: strong ? theme.text : theme.muted }, strong && styles.strong]}>
-        {label}
-      </Text>
+    <View style={styles.infoRow}>
+      <Text style={{ color: theme.muted, flex: 1 }}>{label}</Text>
+      <Text style={{ color: theme.text, fontWeight: "800" }}>{value}</Text>
+    </View>
+  );
+}
+
+function Total({ label, value, currency, strong }: { label: string; value: number; currency: string; strong?: boolean }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.infoRow}>
+      <Text style={[{ color: theme.muted, flex: 1 }, strong && { color: theme.text, fontSize: 18, fontWeight: "900" }]}>{label}</Text>
       <Money value={value} currency={currency} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { width: "100%", maxWidth: 1440, alignSelf: "center", padding: 20, gap: 18, paddingBottom: 60 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 14 },
-  hero: { borderRadius: 26, padding: 26, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 22 },
-  heroMain: { flex: 1, minWidth: 250, gap: 7 },
-  heroClient: { color: "#FFFFFF", fontSize: 29, fontWeight: "900" },
-  heroMeta: { color: "#DCE7F7" },
-  heroTotal: { alignItems: "flex-end", gap: 7 },
-  heroLabel: { color: "#C7D9F5", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-  heroMoney: { backgroundColor: "#FFFFFF", paddingHorizontal: 15, paddingVertical: 12, borderRadius: 13 },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  action: { flexGrow: 1, flexBasis: 220 },
+  page: { width: "100%", maxWidth: 1200, alignSelf: "center", padding: 20, gap: 16, paddingBottom: 60 },
+  hero: { borderRadius: 24, padding: 24, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 16 },
+  heroTitle: { color: "#FFFFFF", fontSize: 29, fontWeight: "900", marginTop: 8 },
+  heroMeta: { color: "#DCE7F7", marginTop: 4 },
+  totalBox: { backgroundColor: "#FFFFFF", borderRadius: 14, padding: 14, gap: 4 },
+  totalLabel: { fontSize: 10, fontWeight: "900", color: "#61708A" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: 9 },
   columns: { gap: 14 },
   columnsWide: { flexDirection: "row", alignItems: "flex-start" },
+  infoRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   divider: { height: 1 },
-  row: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderBottomWidth: 1 },
-  rowTitle: { fontSize: 13, fontWeight: "800" },
-  code: { fontSize: 10, fontWeight: "900", letterSpacing: 0.4, marginTop: 3 },
-  value: { fontSize: 12, fontWeight: "800", textAlign: "right" },
-  strong: { fontSize: 18, fontWeight: "900" },
-  itemHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
-  number: { width: 39, height: 39, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  numberText: { color: "#FFFFFF", fontWeight: "900" },
-  itemTitle: { fontSize: 18, fontWeight: "900", marginBottom: 3 },
-  subheading: { fontSize: 15, fontWeight: "900" },
-  optimizerHeader: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 12 },
-  optimizerTitle: { fontSize: 20, fontWeight: "900", marginTop: 8, marginBottom: 3 },
-  recommendation: { fontWeight: "900", fontSize: 12 },
-  planGrid: { gap: 12 },
-  plan: { flex: 1, borderWidth: 1, borderRadius: 16, padding: 13, gap: 9, minWidth: 0 },
-  planHeading: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
-  barGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  barCard: { flexGrow: 1, flexBasis: 260, maxWidth: 440, borderRadius: 14, padding: 14, gap: 7 },
-  barTrack: { height: 28, borderRadius: 8, overflow: "hidden", flexDirection: "row" },
-  barCut: { borderRightWidth: 2, borderRightColor: "#FFFFFF" },
+  itemRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, borderBottomWidth: 1 },
+  itemTitle: { fontSize: 14, fontWeight: "900" },
+  fieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  switchRow: { flexDirection: "row", alignItems: "center", padding: 13, borderRadius: 13 },
 });

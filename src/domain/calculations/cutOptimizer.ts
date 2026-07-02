@@ -1,5 +1,11 @@
 import { MaterialCut, OptimizedBar } from "../models";
 
+export const DEFAULT_BAR_LENGTH_FEET = 21;
+
+export function feetToInches(feet: number) {
+  return feet * 12;
+}
+
 /**
  * First Fit Decreasing: una heurística rápida y determinista.
  * Agrupa por referencia de perfil antes de llamar esta función.

@@ -20,10 +20,17 @@ export function supportsRails(id: SystemId) {
   return RAIL_SYSTEMS.includes(id);
 }
 
+export const SIMPLE_MEASUREMENT_SYSTEMS: readonly SystemId[] = [
+  "Puerta Comercial",
+  "Puerta Abisagrada P40",
+];
+
+export function usesSimpleMeasurementFlow(id: SystemId) {
+  return SIMPLE_MEASUREMENT_SYSTEMS.includes(id);
+}
+
 export function availableLockTypes(id: SystemId): readonly LockType[] {
-  if (id === "Tradicional") return ["mono", "puño", "tradicional"];
-  if (id === "P-92") return ["mono", "puño", "monopunto"];
-  return ["mono", "puño"];
+  return ["puño"];
 }
 
 export interface SystemCatalogItem {

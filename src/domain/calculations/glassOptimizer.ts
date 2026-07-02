@@ -7,6 +7,11 @@ import {
 } from "../models";
 
 const INCH_TO_MM = 25.4;
+export const DEFAULT_GLASS_SHEET_SIZE_ID: GlassSheetSizeId = "130x84";
+const GLASS_SHEET_SIZE_ORDER: readonly GlassSheetSizeId[] = [
+  DEFAULT_GLASS_SHEET_SIZE_ID,
+  "96x72",
+];
 
 export const GLASS_SHEET_SIZES: Record<
   GlassSheetSizeId,
@@ -195,6 +200,8 @@ export function optimizeGlassForSheet(
     sizeId,
     label: stock.label,
     sheets,
+    requiredPieces: pieces.length,
+    placedPieces: sheets.reduce((sum, sheet) => sum + sheet.cuts.length, 0),
     totalWasteAreaM2: round(totalStockArea - usedArea),
     wastePercent: totalStockArea
       ? round(((totalStockArea - usedArea) / totalStockArea) * 100, 1)
@@ -203,7 +210,7 @@ export function optimizeGlassForSheet(
 }
 
 export function compareGlassSheetSizes(glass: GlassPiece[]) {
-  const options = (Object.keys(GLASS_SHEET_SIZES) as GlassSheetSizeId[]).map(
+  const options = GLASS_SHEET_SIZE_ORDER.map(
     (sizeId): GlassOptimization => {
       try {
         return optimizeGlassForSheet(glass, sizeId);
@@ -212,6 +219,8 @@ export function compareGlassSheetSizes(glass: GlassPiece[]) {
           sizeId,
           label: GLASS_SHEET_SIZES[sizeId].label,
           sheets: [],
+          requiredPieces: glass.reduce((sum, piece) => sum + piece.pieces, 0),
+          placedPieces: 0,
           totalWasteAreaM2: 0,
           wastePercent: 100,
           error: error instanceof Error ? error.message : "La pieza no cabe.",
@@ -219,16 +228,13 @@ export function compareGlassSheetSizes(glass: GlassPiece[]) {
       }
     },
   );
-  const recommended = options.filter((option) => !option.error).sort((a, b) => {
-    const aArea = a.sheets.reduce(
-      (sum, sheet) => sum + (sheet.widthMm * sheet.heightMm) / 1_000_000,
-      0,
-    );
-    const bArea = b.sheets.reduce(
-      (sum, sheet) => sum + (sheet.widthMm * sheet.heightMm) / 1_000_000,
-      0,
-    );
-    return aArea - bArea || a.wastePercent - b.wastePercent;
-  })[0];
+  const recommended = options
+    .filter((option) => !option.error)
+    .sort(
+      (a, b) =>
+        a.totalWasteAreaM2 - b.totalWasteAreaM2 ||
+        a.wastePercent - b.wastePercent ||
+        (a.sizeId === DEFAULT_GLASS_SHEET_SIZE_ID ? -1 : 1),
+    )[0];
   return { options, recommendedSizeId: recommended?.sizeId ?? null };
 }

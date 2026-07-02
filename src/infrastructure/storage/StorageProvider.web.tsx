@@ -1,12 +1,14 @@
-import type { AppSettings, Quote } from "@/domain/models";
+import type { AppSettings, Breakdown, Quote } from "@/domain/models";
+import type { BreakdownRepository } from "@/infrastructure/breakdownRepository";
 import type { QuoteRepository } from "@/infrastructure/quoteRepository";
 import { StorageContext } from "@/infrastructure/storage/StorageContext";
 import { mergeStoredSettings } from "@/infrastructure/storage/settings";
-import type { AppStorage, StoredQuote } from "@/infrastructure/storage/types";
+import type { AppStorage, StoredBreakdown, StoredQuote } from "@/infrastructure/storage/types";
 import { PropsWithChildren, useMemo } from "react";
 
 const QUOTES_KEY = "mac-desgloses:quotes:v1";
 const SETTINGS_KEY = "mac-desgloses:settings:v1";
+const BREAKDOWNS_KEY = "mac-desgloses:breakdowns:v1";
 
 function browserStorage(): Storage | null {
   try {
@@ -63,11 +65,48 @@ class LocalStorageQuoteRepository implements QuoteRepository {
   }
 }
 
+class LocalStorageBreakdownRepository implements BreakdownRepository {
+  constructor(private readonly storage: Storage | null) {}
+
+  private read(): StoredBreakdown[] {
+    return parseValue<StoredBreakdown[]>(
+      this.storage?.getItem(BREAKDOWNS_KEY) ?? null,
+      [],
+    );
+  }
+
+  async save(breakdown: Breakdown) {
+    const records = this.read();
+    const record = {
+      breakdown,
+      searchText: `${breakdown.number} ${breakdown.name}`.toLowerCase(),
+    };
+    const index = records.findIndex(({ breakdown: stored }) => stored.id === breakdown.id);
+    if (index === -1) records.push(record);
+    else records[index] = record;
+    this.storage?.setItem(BREAKDOWNS_KEY, JSON.stringify(records));
+  }
+
+  async list(search = "") {
+    const normalized = search.toLowerCase();
+    return this.read()
+      .filter(({ searchText }) => searchText.includes(normalized))
+      .map(({ breakdown }) => breakdown)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async findById(id: string) {
+    return this.read().find(({ breakdown }) => breakdown.id === id)?.breakdown ?? null;
+  }
+}
+
 class LocalStorageAdapter implements AppStorage {
   readonly quotes: QuoteRepository;
+  readonly breakdowns: BreakdownRepository;
 
   constructor(private readonly storage: Storage | null) {
     this.quotes = new LocalStorageQuoteRepository(storage);
+    this.breakdowns = new LocalStorageBreakdownRepository(storage);
   }
 
   async loadSettings() {

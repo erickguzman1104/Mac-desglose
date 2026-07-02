@@ -1,4 +1,5 @@
 import { GlassSheetPlan } from "@/domain/models";
+import { formatInches } from "@/domain/calculations/inchFractions";
 import { StyleSheet, Text, View } from "react-native";
 import { useTheme } from "./theme";
 
@@ -39,8 +40,8 @@ export function GlassSheetSketch({ sheet }: { sheet: GlassSheetPlan }) {
               adjustsFontSizeToFit
               style={[styles.cutText, { color: theme.text }]}
             >
-              {(cut.originalWidthMm / 25.4).toFixed(1)}″×
-              {(cut.originalHeightMm / 25.4).toFixed(1)}″
+              {formatInches(cut.originalWidthMm / 25.4)}×
+              {formatInches(cut.originalHeightMm / 25.4)}
               {cut.rotated ? " ↻" : ""}
             </Text>
           </View>

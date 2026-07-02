@@ -5,7 +5,8 @@ import { useTheme } from "./theme";
 
 const NAV_ITEMS = [
   { label: "Inicio", symbol: "⌂", path: "/" as const },
-  { label: "Nuevo trabajo", symbol: "+", path: "/quotes/new" as const },
+  { label: "Desgloses", symbol: "▤", path: "/breakdowns" as const },
+  { label: "Cotizaciones", symbol: "$", path: "/quotes" as const },
   { label: "Configuración", symbol: "⚙", path: "/settings" as const },
 ];
 
@@ -43,7 +44,7 @@ export function NavigationShell({ children }: PropsWithChildren) {
             <Pressable
               key={item.path}
               accessibilityRole="button"
-              onPress={() => router.push(item.path)}
+              onPress={() => router.push(item.path as never)}
               style={[
                 styles.navItem,
                 desktop ? styles.desktopNavItem : styles.mobileNavItem,
@@ -62,10 +63,10 @@ export function NavigationShell({ children }: PropsWithChildren) {
       </View>
       {desktop && (
         <View style={[styles.demoNotice, { backgroundColor: theme.primarySoft }]}>
-          <Text style={[styles.demoTitle, { color: theme.primary }]}>Modo demostrativo</Text>
-          <Text style={[styles.demoText, { color: theme.muted }]}>
-            Valida las fórmulas antes de fabricar.
-          </Text>
+            <Text style={[styles.demoTitle, { color: theme.primary }]}>Flujos separados</Text>
+            <Text style={[styles.demoText, { color: theme.muted }]}>
+              Desglose técnico y cotización comercial.
+            </Text>
         </View>
       )}
     </View>
